@@ -1,6 +1,3 @@
-// PathIO.as
-// Loading JSON, unit conversion, folder listing
-
 namespace PathCam {
 
     string PathsDir() {
@@ -11,13 +8,13 @@ namespace PathCam {
 
     array<string> ListPathFiles() {
         string dir = PathsDir();
-        auto entries = IO::IndexFolder(dir, false); // absolute or full-ish paths (implementation-dependent)
+        auto entries = IO::IndexFolder(dir, false);
         array<string> files;
         for (uint i = 0; i < entries.Length; i++) {
             string fullPath = entries[i];
             string fileOnly = Path::GetFileName(fullPath);
             if (fileOnly.EndsWith(".json") && fileOnly.StartsWith("path.")) {
-                files.InsertLast(fullPath); // keep absolute; loader is robust now
+                files.InsertLast(fullPath);
             }
         }
         files.SortAsc();
@@ -35,7 +32,6 @@ namespace PathCam {
         auto @x = v.Get(key);
         if (x is null || x.GetType() == Json::Type::Null) return false;
 
-        // If it's a string, parse it (handles "60" / "60.0")
         if (x.GetType() == Json::Type::String) {
             string s = string(x);
             float val = Text::ParseFloat(s);
@@ -43,7 +39,6 @@ namespace PathCam {
             return true;
         }
 
-        // Otherwise, assume numeric-convertible (int/float)
         dst = float(x);
         return true;
     }
@@ -56,29 +51,18 @@ namespace PathCam {
 
         Json::Type t = x.GetType();
 
-        // 1) Proper JSON boolean
-        if (t == Json::Type::Boolean) {
-            dst = bool(x);
-            return true;
-        }
+        if (t == Json::Type::Boolean) { dst = bool(x); return true; }
 
-        // 2) Numeric: treat any non-zero as true
-        if (t == Json::Type::Number) {
-            float val = float(x);          // works for int/float Json numbers
-            dst = (val != 0.0f);
-            return true;
-        }
+        if (t == Json::Type::Number) { float val = float(x);  dst = (val != 0.0f); return true; }
 
-        // 3) String forms: true/false, yes/no, on/off, 1/0
         if (t == Json::Type::String) {
             string s = string(x);
             s = s.Trim().ToLower();
             if (s == "true" || s == "1" || s == "yes" || s == "y" || s == "on")  { dst = true;  return true; }
             if (s == "false"|| s == "0" || s == "no"  || s == "n" || s == "off") { dst = false; return true; }
-            return false; // unrecognized string
+            return false;
         }
 
-        // Other types: keep default
         return false;
     }
 
@@ -118,7 +102,6 @@ namespace PathCam {
         return meta.unitsBlocks ? CoordToPosBlocks(v) : v;
     }
 
-    // simple insertion sort by keyframe time (stable and tiny)
     void SortKeysByTime(array<CamKey> &inout ks) {
         for (uint i = 1; i < ks.Length; i++) {
             CamKey k = ks[i];
@@ -131,7 +114,6 @@ namespace PathCam {
         }
     }
 
-    // Load a normalized float curve: keys are [u, value] with u in [0..1] (wraps).
     bool LoadFloatCurve(const Json::Value@ parent, const string &in key, FloatCurve &out curve) {
         curve.keys.RemoveRange(0, curve.keys.Length);
         if (parent is null) return false;
@@ -147,7 +129,6 @@ namespace PathCam {
                 k.u = float(e[0]);
                 k.v = float(e[1]);
             } else if (e.GetType() == Json::Type::Object) {
-                // prefer "u" (normalized). If only "t" provided, we can't normalize here, so skip with a warning.
                 bool haveU = ReadFloat(e, "u", k.u, -1.0f);
                 if (!haveU) {
                     log("LoadFloatCurve: object key without 'u' not supported; use [u,value] pairs.", LogLevel::Warn, 153, "LoadFloatCurve");
@@ -158,7 +139,6 @@ namespace PathCam {
                 continue;
             }
 
-            // sanitize u
             if (Math::IsInf(k.u)) k.u = 0.0f;
             curve.keys.InsertLast(k);
         }
@@ -213,7 +193,6 @@ namespace PathCam {
 
         SortKeysByTime(path.keys);
 
-        // If duration missing, infer from last key
         if (path.meta.duration <= 0.0 && path.keys.Length > 0) {
             path.meta.duration = path.keys[path.keys.Length - 1].t;
         }
@@ -246,7 +225,6 @@ namespace PathCam {
             ReadBool(f, "cw", path.fnHelix.cw, path.fnHelix.cw);
 
         } else if (n == "target_polyline") {
-            // points + options
             LoadPolylinePoints(f, "points", path.meta, path.fnPolyline.pts);
             ReadBool(f, "closed", path.fnPolyline.closed, path.fnPolyline.closed);
             ReadFloat(f, "speed", path.fnPolyline.speed, path.fnPolyline.speed);
@@ -257,24 +235,19 @@ namespace PathCam {
             ReadString(f, "interpolation", interp, interp);
             path.fnPolyline.interp = interp.ToLower().StartsWith("lin") ? InterpMode::Linear : InterpMode::CatmullRom;
 
-            // NEW: optional per-progress curves
             LoadFloatCurve(f, "height_offset_keys", path.fnPolyline.heightCurve);
             LoadFloatCurve(f, "dist_keys", path.fnPolyline.distCurve);
             LoadFloatCurve(f, "look_ahead_keys", path.fnPolyline.lookAheadCurve);
 
             path.fnPolyline.RebuildLengths();
 
-            // Derive duration if missing and we have length+speed
             if (path.meta.duration <= 0.0f && path.fnPolyline.speed > 0.0f && path.fnPolyline.totalLen > 0.0f) {
                 path.meta.duration = path.fnPolyline.totalLen / path.fnPolyline.speed;
                 log("LoadPath: derived duration from polyline length: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, 270, "LoadFn");
             }
 
         } else if (n == "moving_orbit") {
-            // NEW: orbit around a moving center that follows its own polyline
-            // center path
             LoadPolylinePoints(f, "center_points", path.meta, path.fnMovingOrbit.center.pts);
-            // allow either "center_closed" (preferred) or "closed" as a fallback
             bool tmpClosed;
             if (ReadBool(f, "center_closed", tmpClosed, path.fnMovingOrbit.center.closed)) {
                 path.fnMovingOrbit.center.closed = tmpClosed;
@@ -284,18 +257,15 @@ namespace PathCam {
             ReadFloat(f, "center_speed", path.fnMovingOrbit.center.speed, path.fnMovingOrbit.center.speed);
             path.fnMovingOrbit.center.RebuildLengths();
 
-            // orbit parameters
             ReadFloat(f, "radius", path.fnMovingOrbit.radius, path.fnMovingOrbit.radius);
             ReadFloat(f, "v_deg", path.fnMovingOrbit.vDeg, path.fnMovingOrbit.vDeg);
             ReadFloat(f, "deg_per_sec", path.fnMovingOrbit.degPerSec, path.fnMovingOrbit.degPerSec);
             ReadFloat(f, "start_deg", path.fnMovingOrbit.startDeg, path.fnMovingOrbit.startDeg);
             ReadBool(f, "cw", path.fnMovingOrbit.cw, path.fnMovingOrbit.cw);
 
-            // optional curves along center progress
             LoadFloatCurve(f, "radius_keys", path.fnMovingOrbit.radiusCurve);
             LoadFloatCurve(f, "v_deg_keys", path.fnMovingOrbit.vDegCurve);
 
-            // Derive duration, preferring center path cycle time
             if (path.meta.duration <= 0.0f) {
                 if (path.fnMovingOrbit.center.speed > 0.0f && path.fnMovingOrbit.center.totalLen > 0.0f) {
                     path.meta.duration = path.fnMovingOrbit.center.totalLen / path.fnMovingOrbit.center.speed;
@@ -312,7 +282,6 @@ namespace PathCam {
     }
 
     bool LoadPath(const string &in fileOrRel, CameraPath &out path) {
-        // Resolve absolute path: accept either an absolute path or a filename relative to PathsDir()
         string abs = fileOrRel;
         if (!IO::FileExists(abs)) {
             string candidate = PathsDir() + "/" + fileOrRel;
@@ -341,22 +310,18 @@ namespace PathCam {
             return false;
         }
 
-        // Basic fields
         auto @ver = root.Get("version");
         if (ver !is null && ver.GetType() != Json::Type::Null) path.version = int(ver);
 
-        ReadString(root, "name", path.name, ""); // may be empty; fallback below
+        ReadString(root, "name", path.name, "");
 
-        // Mode: keyframes (default) or fn
         string mode = "keyframes";
         ReadString(root, "mode", mode, mode);
         path.mode = mode.ToLower().StartsWith("fn") ? PathMode::Fn : PathMode::Keyframes;
 
-        // Parse metadata (units, fps, duration, speed, interp, unitsBlocks, loop maybe)
         auto @md = root.Get("metadata");
         ParseMetadata(md, path.meta);
 
-        // Allow duration at top-level as a fallback
         if (path.meta.duration <= 0.0) {
             float topDur;
             if (ReadFloat(root, "duration", topDur, -1.0) && topDur > 0.0) {
@@ -365,23 +330,19 @@ namespace PathCam {
             }
         }
 
-        // Load according to mode
         bool ok = false;
         if (path.mode == PathMode::Keyframes) {
-            // Load keyframes into path.keys
             ok = LoadKeyframes(root, path);
             if (!ok) {
                 log("LoadPath: no/invalid keyframes in " + abs, LogLevel::Error, 374, "LoadPath");
                 return false;
             }
 
-            // If duration missing, infer from last keyframe
             if (path.meta.duration <= 0.0 && path.keys.Length > 0) {
                 path.meta.duration = path.keys[path.keys.Length - 1].t;
                 log("LoadPath: inferred duration from last keyframe: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, 381, "LoadPath");
             }
 
-            // Final validation for keyframes
             if (path.keys.Length == 0) {
                 log("LoadPath: keyframes mode but keys.Length == 0", LogLevel::Error, 386, "LoadPath");
                 return false;
@@ -389,10 +350,8 @@ namespace PathCam {
 
             ok = true;
         } else {
-            // Function mode: load fn payload into path.fn*
             LoadFn(root, path);
 
-            // Accept duration inside fn block as a fallback (e.g., "fn": { "duration": 60 })
             if (path.meta.duration <= 0.0) {
                 auto @fnObj = root.Get("fn");
                 float fnDur;
@@ -402,7 +361,6 @@ namespace PathCam {
                 }
             }
 
-            // If still missing, try to derive from known fn types
             if (path.meta.duration <= 0.0) {
                 string fn = path.fnName.ToLower();
                 if (fn == "orbital_circle") {
@@ -425,20 +383,12 @@ namespace PathCam {
                 }
             }
 
-            // Final validation for fn mode: require fnName and positive duration
-            if (path.fnName.Length == 0) {
-                log("LoadPath: fn-mode but no fn.name specified", LogLevel::Error, 430, "LoadPath");
-                return false;
-            }
-            if (path.meta.duration <= 0.0) {
-                log("LoadPath: fn-mode requires metadata.duration>0 (or derivable), currently duration=" + Text::Format("%.3f", path.meta.duration), LogLevel::Error, 434, "LoadPath");
-                return false;
-            }
+            if (path.fnName.Length == 0) { log("LoadPath: fn-mode but no fn.name specified", LogLevel::Error, 430, "LoadPath"); return false; }
+            if (path.meta.duration <= 0.0) { log("LoadPath: fn-mode requires metadata.duration>0 (or derivable), currently duration=" + Text::Format("%.3f", path.meta.duration), LogLevel::Error, 434, "LoadPath"); return false; }
 
             ok = true;
         }
 
-        // ---- Resolve loop flag robustly (metadata > top-level > fn), case-safe ----
         bool loopVal = path.meta.loop;
         bool haveLoop = false;
 
