@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "Map Perimeter Loop (looks inward)",
+  "mode": "fn",
+  "metadata": {
+    "units": "blocks",
+    "fps": 1,
+    "loop": true,
+    "speed": 1.0
+  },
+  "fn": {
+    "name": "target_polyline",
+    "interpolation": "catmullrom",
+    "closed": true,
+    "speed": 64.0,
+    "dist": 1200.0,
+    "look_ahead": 64.0,
+    "height_offset": 0.0,
+    "points": [
+      [ 0, 10,  0],
+      [ 0, 10, 48],
+      [48, 10, 48],
+      [48, 10,  0]
+    ]
+  }
+}

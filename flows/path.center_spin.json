@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "Map Center Spin (1h loop, higher & wider)",
+  "mode": "fn",
+  "metadata": {
+    "units": "blocks",
+    "fps": 0,
+    "loop": true,
+    "speed": 1.0
+  },
+  "fn": {
+    "name": "orbital_circle",
+    "center": [768, 64, 768],
+    "radius": 1600.0,
+    "v_deg": 20.0,
+    "deg_per_sec": 0.1,
+    "start_deg": 0.0,
+    "cw": true
+  }
+}
