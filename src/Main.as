@@ -7,3 +7,7 @@ void Main() {
 void Update(float dt) {
     PathCam::g_Player.Update(dt / 1000.0f);
 }
+
+void Render() {
+    FILE_EXPLORER_BASE_RENDERER();
+}

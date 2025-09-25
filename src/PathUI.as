@@ -11,12 +11,48 @@ namespace PathCam {
         }
     }
 
-    [SettingsTab name="Camera Path Player" icon="Kenney::Play" order="2"]
+    array<string> selectedFiles;
+
+    [SettingsTab name="Camera Path Player" icon="Play" order="2"]
     void PathTab() {
         UI::Text("Paths folder: " + PathsDir());
         if (UI::Button("Refresh file list")) RefreshFiles();
         UI::SameLine();
         if (UI::Button("Copy folder path")) IO::SetClipboard(PathsDir());
+        UI::SameLine();
+
+        // Button to open the File Explorer for Paths
+        if (UI::Button(Icons::FolderOpen + " Open File Explorer and select JSON for adding")) {
+            FileExplorer::fe_Start(
+                "Local Files",                       // Unique session ID
+                true,                                // _mustReturn: Require selection
+                "path",                              // _returnType: "path" or "ElementInfo"
+                vec2(1, -1),                         // _minmaxReturnAmount: Min and max selections
+                IO::FromUserGameFolder(""),  // _path: Initial folder path
+                "",                                  // _searchQuery: Optional search query
+                {  },                          // _filters: File type filters
+                { "json" }                           // _canOnlyReturn: Allowed types for export
+            );
+        }
+
+        // Handle Path Selection
+        auto pathExplorer = FileExplorer::fe_GetExplorerById("Local Files");
+        if (pathExplorer !is null && pathExplorer.exports.IsSelectionComplete()) {
+            auto paths = pathExplorer.exports.GetSelectedPaths();
+            if (paths !is null) {
+                selectedFiles = paths;
+                // Additional processing if needed
+            }
+            pathExplorer.exports.SetSelectionComplete();
+        }
+
+        // Display selected file paths
+        if (selectedFiles.Length > 0) {
+            for (uint i = 0; i < selectedFiles.Length; i++) {
+                _IO::File::CopyFileTo(selectedFiles[i], PathsDir() + "/" + Path::GetFileName(selectedFiles[i]), true);
+            }
+            selectedFiles.RemoveRange(0, selectedFiles.Length);
+        }
 
         UI::Separator();
 
@@ -38,10 +74,10 @@ namespace PathCam {
             PathCam::g_Player.LoadFromFile(g_SelectedFile);
             if (PathCam::g_Player.loaded) {
                 NotifyInfo("Loaded: " + PathCam::g_Player.path.name + " (" + Text::Format("%.2f", PathCam::g_Player.Duration()) + "s)");
-                log("UI loaded: " + g_SelectedFile, LogLevel::Info, -1, "PathUI::PathTab");
+                log("UI loaded: " + g_SelectedFile, LogLevel::Info, 77, "PathTab");
             } else {
                 NotifyError("Failed to load: " + g_SelectedFile);
-                log("UI failed to load: " + g_SelectedFile, LogLevel::Error, -1, "PathUI::PathTab");
+                log("UI failed to load: " + g_SelectedFile, LogLevel::Error, 80, "PathTab");
             }
         }
 

@@ -47,7 +47,7 @@ namespace PathCam {
             safe.dist = 200.0;
             safe.h = 0.0;
             safe.v = 0.0;
-            log("EvalKeyframes: keys.Length == 0; returning safe frame", LogLevel::Warn, -1, "PathCam::EvalKeyframes");
+            log("EvalKeyframes: keys.Length == 0; returning safe frame", LogLevel::Warn, 50, "MakeAngleContinuous");
             return safe;
         }
 

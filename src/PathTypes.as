@@ -128,6 +128,7 @@ namespace PathCam {
         float vDeg     = 20.0f;
         float degPerSec = 6.0f;
         float startDeg  = 0.0f;
+        bool  cw        = true;
 
         FloatCurve radiusCurve;
         FloatCurve vDegCurve;
