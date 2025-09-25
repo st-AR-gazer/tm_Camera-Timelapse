@@ -11,12 +11,11 @@ enum LogLevel { Debug, Info, Notice, Warn, Error, Critical, Custom }
 
 namespace logging {
 
-    [Setting category="Logging" name="Write a copy of each log line to file"]
-    bool S_writeLogToFile = true;
-
+    [Setting category="z~DEV" name="Write a copy of each log line to file" hidden]
+    bool S_writeLogToFile = false;
 
     /***********************************************/
-    [Setting category="z~DEV" name="Show default OP logs" hidden] bool S_showDefaultLogs = false;
+    [Setting category="z~DEV" name="Show default OP logs" hidden] bool S_showDefaultLogs = true;
     /***********************************************/ // Change this wen using _build.py
 
 
@@ -50,6 +49,7 @@ namespace logging {
             UI::Text("Logging Options"); UI::Separator();
 
             S_showDefaultLogs = UI::Checkbox("Show default OP logs", S_showDefaultLogs);
+            S_writeLogToFile  = UI::Checkbox("Write a copy of each log line to file", S_writeLogToFile);
             DEV_S_sDebug      = UI::Checkbox("Show Debug logs",      DEV_S_sDebug);
             DEV_S_sInfo       = UI::Checkbox("Show Info logs",       DEV_S_sInfo);
             DEV_S_sNotice     = UI::Checkbox("Show Notice logs",     DEV_S_sNotice);
