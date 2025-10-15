@@ -40,7 +40,7 @@ namespace PathCam {
         void LoadFromFile(const string &in fileOrRel) {
             CameraPath p;
             bool ok = LoadPath(fileOrRel, p);
-            log("Player.LoadFromFile: LoadPath returned " + tostring(ok), ok ? LogLevel::Info : LogLevel::Error, -1, "Player::LoadFromFile");
+            log("Player.LoadFromFile: LoadPath returned " + tostring(ok), ok ? LogLevel::Info : LogLevel::Error, 43, "LoadFromFile");
 
             if (ok) {
                 float prevRate = rate;
@@ -61,7 +61,7 @@ namespace PathCam {
         }
 
         void Play() {
-            if (!loaded) { log("Play() called but no path loaded", LogLevel::Warn, 55, "Play"); return; }
+            if (!loaded) { log("Play() called but no path loaded", LogLevel::Warn, 64, "Play"); return; }
             playing = true;
             Editor::EnableCustomCameraInputs();
         }
@@ -123,15 +123,15 @@ namespace PathCam {
             }
 
             if (hasFn) {
-                if (S_WarnModeMismatchOnce && !_warnedModeMismatch) { _warnedModeMismatch = true; log("EvaluateAt: mode mismatch; falling back to fn='" + path.fnName + "'", LogLevel::Warn, 117, "Seek"); }
+                if (S_WarnModeMismatchOnce && !_warnedModeMismatch) { _warnedModeMismatch = true; log("EvaluateAt: mode mismatch; falling back to fn='" + path.fnName + "'", LogLevel::Warn, 126, "Seek"); }
                 return EvalFn(path, t);
             }
             if (hasKeys) {
-                if (S_WarnModeMismatchOnce && !_warnedModeMismatch) { _warnedModeMismatch = true; log("EvaluateAt: mode mismatch; falling back to keyframes", LogLevel::Warn, 121, "Seek"); }
+                if (S_WarnModeMismatchOnce && !_warnedModeMismatch) { _warnedModeMismatch = true; log("EvaluateAt: mode mismatch; falling back to keyframes", LogLevel::Warn, 130, "Seek"); }
                 return EvalKeyframes(path, t);
             }
 
-            if (!_warnedNoData) { _warnedNoData = true; log("EvaluateAt: no fn and no keyframes available; returning safe frame", LogLevel::Error, 125, "Seek"); }
+            if (!_warnedNoData) { _warnedNoData = true; log("EvaluateAt: no fn and no keyframes available; returning safe frame", LogLevel::Error, 134, "Seek"); }
 
             CamKey safe;
             safe.t = t;
