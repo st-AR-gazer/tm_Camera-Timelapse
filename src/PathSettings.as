@@ -6,3 +6,17 @@ bool S_WarnModeMismatchOnce = true;
 
 [Setting category="Camera" name="Smooth when snapping to FPS (interpolate between frames)"]
 bool S_SnapInterpolate = true;
+
+[Setting hidden name="Default: Snap to FPS frames"]
+bool S_DefaultSnapToFps = false;
+
+[Setting category="Camera" name="Persist playback rate across loads"]
+bool S_PersistRate = true;
+
+[Setting category="Camera" name="Default playback rate"]
+float S_DefaultRate = 1.0;
+
+[Setting category="Camera" name="Rate slider max"]
+float S_RateMax = 400.0;
+[Setting category="Camera" name="Rate slider min"]
+float S_RateMin = 0.01;

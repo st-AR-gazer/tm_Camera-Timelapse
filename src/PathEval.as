@@ -210,11 +210,22 @@ namespace PathCam {
 
         } else if (fn == "orbital_helix") {
             float dir = p.fnHelix.cw ? -1.0 : 1.0;
+
             float hDeg = p.fnHelix.startDeg + dir * p.fnHelix.degPerSec * t;
             res.h = hDeg * DEG2RAD;
-            float vDeg = Math::Lerp(p.fnHelix.vStartDeg, p.fnHelix.vEndDeg, t / dur);
+
+            float u = Math::Clamp(t / dur, 0.0, 1.0);
+            float vDeg = Math::Lerp(p.fnHelix.vStartDeg, p.fnHelix.vEndDeg, u);
             res.v = vDeg * DEG2RAD;
-            res.target = p.fnHelix.center;
+
+            vec3 c = p.fnHelix.center;
+            if (p.fnHelix.hasCenterEnd) {
+                float pw = Math::Max(0.000001, p.fnHelix.centerLerpPow);
+                float w = Math::Pow(u, pw);
+                c = Math::Lerp(p.fnHelix.center, p.fnHelix.centerEnd, w);
+            }
+
+            res.target = c;
             res.dist = p.fnHelix.radius;
 
         } else if (fn == "target_polyline") {
@@ -248,6 +259,18 @@ namespace PathCam {
             res.dist   = dist;
             res.h      = hv.x;
             res.v      = hv.y;
+
+        } else if (fn == "vertical_ascent") {
+            float u = Math::Clamp(t / dur, 0.0, 1.0);
+
+            float dir = p.fnAscent.cw ? -1.0 : 1.0;
+            float hDeg = p.fnAscent.startDeg + dir * p.fnAscent.degPerSec * t;
+
+            res.h = hDeg * DEG2RAD;
+            res.v = p.fnAscent.vDeg * DEG2RAD;
+            res.target = p.fnAscent.center;
+            res.dist = Math::Lerp(p.fnAscent.distStart, p.fnAscent.distEnd, u);
+
 
         } else if (fn == "moving_orbit") {
             auto mo = p.fnMovingOrbit;

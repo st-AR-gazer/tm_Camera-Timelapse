@@ -2,6 +2,8 @@ const float TAU = 6.28318530717958647692;
 
 void Main() {
     PathCam::RefreshFiles();
+    PathCam::g_Player.snapToFps = S_DefaultSnapToFps;
+    PathCam::g_Player.rate = S_DefaultRate;
 }
 
 void Update(float dt) {

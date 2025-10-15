@@ -64,41 +64,57 @@ namespace PathCam {
     }
 
     class PathMetadata {
-        float fps = 1.0;
-        float duration = 0.0;
-        bool loop = false;
-        float speed = 1.0;
+        float fps         = 1.0;
+        float duration    = 0.0;
+        bool loop         = false;
+        float speed       = 1.0;
         InterpMode interp = InterpMode::CatmullRom;
-        bool unitsBlocks = false;
+        bool unitsBlocks  = false;
     }
 
     class FnCircle {
-        vec3 center = vec3(0,0,0);
-        float radius = 200.0;
-        float vDeg = 20.0;
+        vec3 center     = vec3(0,0,0);
+        float radius    = 200.0;
+        float vDeg      = 20.0;
         float degPerSec = 6.0;
-        float startDeg = 0.0;
-        bool cw = true;
+        float startDeg  = 0.0;
+        bool cw         = true;
     }
 
     class FnHelix {
-        vec3 center = vec3(0,0,0);
-        float radius = 200.0;
+        vec3 center     = vec3(0,0,0);
+        float radius    = 200.0;
         float vStartDeg = 15.0;
-        float vEndDeg = 45.0;
+        float vEndDeg   = 45.0;
         float degPerSec = 6.0;
-        float startDeg = 0.0;
-        bool cw = true;
+        float startDeg  = 0.0;
+        bool cw         = true;
+
+        vec3 centerEnd = vec3(0,0,0);
+        bool hasCenterEnd = false;
+        float centerLerpPow = 1.5;
     }
+
+    class FnAscent {
+        vec3 center     = vec3(0,0,0);
+        float distStart = 800.0;
+        float distEnd   = 2400.0;
+        float distRate  = 0.0;
+        float vDeg      = 89.5;
+        float startDeg  = 0.0;
+        float degPerSec = 0.0;
+        bool  cw        = true;
+    }
+
 
     class FnPolyline {
         array<vec3> pts;
-        bool  closed = false;
-        float speed = 64.0f;
-        float dist  = 200.0f;
-        float lookAhead = 64.0f;
+        bool  closed       = false;
+        float speed        = 64.0f;
+        float dist         = 200.0f;
+        float lookAhead    = 64.0f;
         float heightOffset = 0.0f;
-        InterpMode interp = InterpMode::CatmullRom;
+        InterpMode interp  = InterpMode::CatmullRom;
 
         array<float> cumLen;
         float totalLen = 0.0f;
@@ -124,8 +140,8 @@ namespace PathCam {
 
     class FnOrbitMoving {
         FnPolyline center;
-        float radius   = 200.0f;
-        float vDeg     = 20.0f;
+        float radius    = 200.0f;
+        float vDeg      = 20.0f;
         float degPerSec = 6.0f;
         float startDeg  = 0.0f;
         bool  cw        = true;
@@ -141,7 +157,7 @@ namespace PathCam {
 
     class CameraPath {
         string name;
-        int version = 1;
+        int version   = 1;
         PathMode mode = PathMode::Keyframes;
 
         PathMetadata meta;
@@ -152,6 +168,7 @@ namespace PathCam {
         FnHelix  fnHelix;
         FnPolyline fnPolyline;
         FnOrbitMoving fnMovingOrbit;
+        FnAscent fnAscent;
 
         bool IsValid() const {
             if (mode == PathMode::Keyframes) return keys.Length > 0;

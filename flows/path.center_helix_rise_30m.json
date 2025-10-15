@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "Map Center Spin (128 x 255 x 128)",
+  "name": "Center Helix Rise (30 min)",
   "mode": "fn",
   "metadata": {
     "units": "blocks",
@@ -9,11 +9,12 @@
     "speed": 1.0
   },
   "fn": {
-    "name": "orbital_circle",
-    "center": [1024, 720, 1024],
+    "name": "orbital_helix",
+    "center": [1024, 0, 1024],
     "radius": 3120.0,
-    "v_deg": 17.2,
-    "deg_per_sec": 0.1,
+    "v_start_deg": 0.0,
+    "v_end_deg": 85.0,
+    "deg_per_sec": 0.2,
     "start_deg": 0.0,
     "cw": true
   }

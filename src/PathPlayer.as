@@ -40,11 +40,20 @@ namespace PathCam {
         void LoadFromFile(const string &in fileOrRel) {
             CameraPath p;
             bool ok = LoadPath(fileOrRel, p);
-            log("Player.LoadFromFile: LoadPath returned " + tostring(ok), ok ? LogLevel::Info : LogLevel::Error, 43, "LoadFromFile");
+            log("Player.LoadFromFile: LoadPath returned " + tostring(ok), ok ? LogLevel::Info : LogLevel::Error, -1, "Player::LoadFromFile");
+
             if (ok) {
+                float prevRate = rate;
                 this.path = p;
                 this.loaded = true;
-                this.rate = p.meta.speed;
+
+                if (S_PersistRate) {
+                    this.rate = prevRate;
+                } else {
+                    this.rate = p.meta.speed;
+                    if (this.rate <= 0.0) this.rate = 1.0;
+                }
+
                 Reset();
             } else {
                 this.loaded = false;

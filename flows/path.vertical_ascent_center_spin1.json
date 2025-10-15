@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "Vertical Ascent Center (1 spin)",
+  "mode": "fn",
+  "metadata": {
+    "units": "blocks",
+    "fps": 0,
+    "loop": true,
+    "speed": 1.0
+  },
+  "fn": {
+    "name": "vertical_ascent",
+    "center": [1024, 0, 1024],
+    "dist_start": 800.0,
+    "dist_end": 3800.0,
+    "dist_rate": 0.8888889,
+    "v_deg": 89.99999,
+    "start_deg": 0.0,
+    "deg_per_sec": 0.106666675,
+    "cw": true
+  }
+}

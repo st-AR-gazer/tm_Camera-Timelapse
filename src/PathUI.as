@@ -61,7 +61,7 @@ namespace PathCam {
         }
 
         UI::BeginDisabled(g_Files.Length == 0);
-        if (UI::BeginCombo("Profile", g_SelectedFile)) {
+        if (UI::BeginCombo("Profile", Path::GetFileName(g_SelectedFile))) {
             for (uint i = 0; i < g_Files.Length; i++) {
                 bool sel = (g_Files[i] == g_SelectedFile);
                 if (UI::Selectable(g_Files[i], sel)) g_SelectedFile = g_Files[i];
@@ -95,7 +95,11 @@ namespace PathCam {
         if (UI::Button(Icons::Stop + " Stop")) g_Player.Stop();
 
         UI::SameLine();
-        UI::Checkbox("Snap to FPS frames", g_Player.snapToFps);
+        bool newSnap = UI::Checkbox("Snap to FPS frames", g_Player.snapToFps);
+        if (newSnap != g_Player.snapToFps) {
+            g_Player.snapToFps = newSnap;
+            S_DefaultSnapToFps = newSnap;
+        }
 
         float dur = g_Player.Duration();
 
@@ -104,8 +108,11 @@ namespace PathCam {
         if (tNew != tOld) g_Player.Seek(tNew);
 
         float rateOld = g_Player.rate;
-        float rateNew = UI::SliderFloat("Rate", rateOld, 0.1, 10.0);
-        if (rateNew != rateOld) g_Player.rate = rateNew;
+        float rateNew = UI::SliderFloat("Rate", rateOld, S_RateMin, S_RateMax);
+        if (rateNew != rateOld) {
+            g_Player.rate = rateNew;
+            S_DefaultRate = rateNew;
+        }
 
         if (g_Player.loaded) {
             UI::Text("Path: " + g_Player.path.name);

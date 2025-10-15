@@ -222,7 +222,14 @@ namespace PathCam {
             ReadFloat(f, "v_end_deg", path.fnHelix.vEndDeg, path.fnHelix.vEndDeg);
             ReadFloat(f, "deg_per_sec", path.fnHelix.degPerSec, path.fnHelix.degPerSec);
             ReadFloat(f, "start_deg", path.fnHelix.startDeg, path.fnHelix.startDeg);
-            ReadBool(f, "cw", path.fnHelix.cw, path.fnHelix.cw);
+            ReadBool(f,  "cw", path.fnHelix.cw, path.fnHelix.cw);
+
+            vec3 cEnd;
+            if (ReadVec3(f, "center_end", cEnd)) {
+                path.fnHelix.centerEnd = AsWorld(path.meta, cEnd);
+                path.fnHelix.hasCenterEnd = true;
+            }
+            ReadFloat(f, "center_lerp_pow", path.fnHelix.centerLerpPow, path.fnHelix.centerLerpPow);
 
         } else if (n == "target_polyline") {
             LoadPolylinePoints(f, "points", path.meta, path.fnPolyline.pts);
@@ -244,6 +251,36 @@ namespace PathCam {
             if (path.meta.duration <= 0.0f && path.fnPolyline.speed > 0.0f && path.fnPolyline.totalLen > 0.0f) {
                 path.meta.duration = path.fnPolyline.totalLen / path.fnPolyline.speed;
                 log("LoadPath: derived duration from polyline length: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, 270, "LoadFn");
+            }
+
+        } else if (n == "vertical_ascent") {
+            ReadVec3(f, "center", path.fnAscent.center);
+            path.fnAscent.center = AsWorld(path.meta, path.fnAscent.center);
+
+            ReadFloat(f, "dist_start", path.fnAscent.distStart, path.fnAscent.distStart);
+            ReadFloat(f, "dist_end",   path.fnAscent.distEnd,   path.fnAscent.distEnd);
+            ReadFloat(f, "dist_rate",  path.fnAscent.distRate,  path.fnAscent.distRate);
+            ReadFloat(f, "v_deg",      path.fnAscent.vDeg,      path.fnAscent.vDeg);
+            ReadFloat(f, "start_deg",  path.fnAscent.startDeg,  path.fnAscent.startDeg);
+            ReadFloat(f, "deg_per_sec",path.fnAscent.degPerSec, path.fnAscent.degPerSec);
+            ReadBool (f, "cw",         path.fnAscent.cw,        path.fnAscent.cw);
+
+
+            if (path.meta.duration <= 0.0) {
+                float fnDur;
+                if (ReadFloat(f, "duration", fnDur, -1.0) && fnDur > 0.0) {
+                    path.meta.duration = fnDur;
+                    log("LoadPath: used fn.duration=" + Text::Format("%.3f", fnDur) + "s", LogLevel::Info, -1, "PathCam::LoadFn");
+                }
+            }
+
+            float delta = Math::Abs(path.fnAscent.distEnd - path.fnAscent.distStart);
+            if (path.fnAscent.distRate > 0.0 && delta > 0.0) {
+                path.meta.duration = delta / path.fnAscent.distRate;
+                log("LoadPath: derived duration for vertical_ascent from dist_rate: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, -1, "PathCam::LoadPath");
+            } else if (Math::Abs(path.fnAscent.degPerSec) > 0.0) {
+                path.meta.duration = 360.0 / Math::Abs(path.fnAscent.degPerSec);
+                log("LoadPath: derived duration for vertical_ascent from deg_per_sec: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, -1, "PathCam::LoadPath");
             }
 
         } else if (n == "moving_orbit") {
