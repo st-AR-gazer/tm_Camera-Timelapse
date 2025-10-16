@@ -3,7 +3,7 @@
 This doc explains the built-in **function paths** (`"mode": "fn"`) you can author in JSON for the Trackmania Editor camera. All examples are drop-in files for:
 
 ```
-OpenplanetNext/Plugins/tm_Camera-Timelapse/Storage/paths/
+OpenplanetNext/PluginStorage/CameraTimelapse/paths/
 ```
 
 Each file should be named like `path.<name>.json`.
