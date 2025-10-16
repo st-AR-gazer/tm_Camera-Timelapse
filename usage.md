@@ -1,4 +1,4 @@
-# Camera Path “fn" Guide
+# Camera Path "fn" Guide
 
 This doc explains the built-in **function paths** (`"mode": "fn"`) you can author in JSON for the Trackmania Editor camera. All examples are drop-in files for:
 
@@ -76,13 +76,13 @@ Orbit around a fixed center at constant radius and vertical angle.
 ```
 
 **Auto-duration:** `360 / deg_per_sec`.
-**Use cases:** map fly-around, timelapse “panorama" shots.
+**Use cases:** map fly-around, timelapse "panorama" shots.
 
 **Tips**
 
 * Wider framing: increase `"radius"`.
 * Flatter view: decrease `"v_deg"` (e.g., 15°).
-* Reverse direction: set `"cw": false` (or enable the global “Invert spin" setting if you added it).
+* Reverse direction: set `"cw": false` (or enable the global "Invert spin" setting if you added it).
 
 ---
 
@@ -169,12 +169,12 @@ Keeps a constant camera distance (like a chase cam around a moving point).
 ### 1) Smoothest motion (fn paths)
 
 * Use `"fps": 0` in metadata (continuous evaluation).
-* In the plugin Settings, leave “Snap to FPS frames" **off** for fn paths.
-* “Step blend duration" is **not used** for continuous fn paths (you can leave it at 0).
+* In the plugin Settings, leave "Snap to FPS frames" **off** for fn paths.
+* "Step blend duration" is **not used** for continuous fn paths (you can leave it at 0).
 
 ### 2) Angle continuity
 
-We keep yaw/pitch **continuous** frame-to-frame and wrap them to [-π, π] internally, so loops are seamless and there's no “flip to shortest path."
+We keep yaw/pitch **continuous** frame-to-frame and wrap them to [-π, π] internally, so loops are seamless and there's no "flip to shortest path."
 
 ### 3) Looping behavior
 
