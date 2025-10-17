@@ -29,9 +29,6 @@ float S_AutoSaveEvery = 300.0;
 [Setting category="Camera" name="Autosave when leaving the editor"]
 bool S_AutoSaveOnEditorExit = true;
 
-[Setting category="Camera" name="Overwrite current profile on autosave"]
-bool S_AutoOverwriteCurrent = true;
-
 [Setting category="Camera" name="Include current Rate in profile when saving"]
 bool S_SaveRateInProfile = false;
 

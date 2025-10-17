@@ -21,22 +21,18 @@ namespace PathCam {
         if (g_LastAutoSaveMs == 0) g_LastAutoSaveMs = now;
 
         if (now - g_LastAutoSaveMs >= uint64(S_AutoSaveEvery * 1000.0f)) {
-            if (S_AutoOverwriteCurrent) {
-                SaveProgressToCurrentProfile(S_BackupBeforeOverwrite);
-            } else {
-                SavePartialResume();
-            }
+            SavePartialResume();
             g_LastAutoSaveMs = now;
         }
     }
 
     void OnEditorExit() {
         if (!S_AutoSaveOnEditorExit || !g_Player.loaded) return;
-        if (S_AutoOverwriteCurrent) {
-            SaveProgressToCurrentProfile(S_BackupBeforeOverwrite);
-        } else {
-            SavePartialResume();
-        }
+        SavePartialResume();
+    }
+
+    string _IsoLocalNoColon() {
+        return Time::FormatString("%Y-%m-%dT%H-%M-%S");
     }
 
     string _DotToUnderscore(const string &in s) {
@@ -45,23 +41,49 @@ namespace PathCam {
         return r;
     }
 
-    string _IsoLocalNoColon() {
-        return Time::FormatString("%Y-%m-%dT%H-%M-%S");
+    string _ShortBaseNoExt(const string &in fileName) {
+        int dotIx = _Text::NthLastIndexOf(fileName, ".", 1);
+        string baseNoExt = dotIx > 0 ? fileName.SubStr(0, dotIx) : fileName;
+        if (baseNoExt.ToLower().StartsWith("path.")) baseNoExt = baseNoExt.SubStr(5);
+        return baseNoExt;
+    }
+
+    string _ResolveOriginalBaseFile() {
+        string target = g_LastLoadedFile;
+        if (target.Length == 0 || !IO::FileExists(target)) return target;
+
+        IO::File f(target, IO::FileMode::Read);
+        string blob = f.ReadToEnd(); f.Close();
+        auto @root = Json::Parse(blob);
+        if (root is null || root.GetType() != Json::Type::Object) return target;
+
+        string mode = "";
+        ReadString(root, "mode", mode, "");
+        auto @resumeObj = root.Get("resume");
+        bool isResume = mode.ToLower().StartsWith("resume") || (resumeObj !is null && resumeObj.GetType() == Json::Type::Object);
+        if (!isResume || resumeObj is null || resumeObj.GetType() != Json::Type::Object) return target;
+
+        string baseFile = "";
+        if (!ReadString(resumeObj, "file", baseFile, "")) return target;
+
+        if (!IO::FileExists(baseFile)) {
+            string candidate = PathsDir() + "/" + baseFile;
+            if (IO::FileExists(candidate)) baseFile = candidate;
+        }
+        return IO::FileExists(baseFile) ? baseFile : target;
     }
 
     void SavePartialResume() {
         if (!g_Player.loaded) { NotifyWarn("No path loaded to save."); return; }
-        if (g_LastLoadedFile.Length == 0) { NotifyWarn("No source file information to save. Load a path first."); return; }
+        if (g_LastLoadedFile.Length == 0) { NotifyWarn("No source file to save. Load a path first."); return; }
+
+        string baseAbs  = _ResolveOriginalBaseFile();
+        string baseFile = Path::GetFileName(baseAbs);
+        if (baseFile.Length == 0) { NotifyError("Could not resolve base profile."); return; }
 
         float t = _NormalizedTimeForSave();
 
-        string baseFull = g_LastLoadedFile;
-        string baseFile = Path::GetFileName(baseFull);
-        int dotIx = _Text::NthLastIndexOf(baseFile, ".", 1);
-        string baseNoExt = dotIx > 0 ? baseFile.SubStr(0, dotIx) : baseFile;
-
-        string shortBase = baseNoExt.StartsWith("path.") ? baseNoExt.SubStr(5) : baseNoExt;
-
+        string shortBase = _ShortBaseNoExt(baseFile);
         string so = _DotToUnderscore(Text::Format("%.3f", t));
         string ts = _IsoLocalNoColon();
 
@@ -87,7 +109,6 @@ namespace PathCam {
 
         NotifyInfo("Saved resume snapshot: " + outName);
         log("SavePartialResume: wrote " + outPath, LogLevel::Info, -1, "PathUI::SavePartialResume");
-
         RefreshFiles();
     }
 
@@ -102,87 +123,6 @@ namespace PathCam {
         }
         return t;
     }
-
-    void SaveProgressToCurrentProfile(bool backupBeforeOverwrite) {
-        if (!g_Player.loaded) {
-            NotifyWarn("No path loaded to save.");
-            return;
-        }
-        string target = g_LastLoadedFile;
-        if (target.Length == 0 || !IO::FileExists(target)) {
-            NotifyWarn("Current profile path is unknown. Load a path first.");
-            return;
-        }
-
-        string resolved = target;
-        {
-            IO::File f(target, IO::FileMode::Read);
-            string blob = f.ReadToEnd(); f.Close();
-            auto @root = Json::Parse(blob);
-            if (root !is null && root.GetType() == Json::Type::Object) {
-                string mode = "";
-                ReadString(root, "mode", mode, "");
-                auto @resumeObj = root.Get("resume");
-                bool isResume = mode.ToLower().StartsWith("resume") || (resumeObj !is null && resumeObj.GetType() == Json::Type::Object);
-                if (isResume && resumeObj !is null && resumeObj.GetType() == Json::Type::Object) {
-                    string baseFile = "";
-                    if (ReadString(resumeObj, "file", baseFile, "")) {
-                        if (!IO::FileExists(baseFile)) {
-                            string candidate = PathsDir() + "/" + baseFile;
-                            if (IO::FileExists(candidate)) baseFile = candidate;
-                        }
-                        if (IO::FileExists(baseFile)) resolved = baseFile;
-                    }
-                }
-            }
-        }
-
-        IO::File f2(resolved, IO::FileMode::Read);
-        string src = f2.ReadToEnd(); f2.Close();
-
-        auto @root2 = Json::Parse(src);
-        if (root2 is null || root2.GetType() != Json::Type::Object) {
-            NotifyError("Failed to parse JSON: " + resolved);
-            return;
-        }
-
-        root2["mode"] = (g_Player.path.mode == PathMode::Fn ? "fn" : "keyframes");
-
-        auto @md = root2.Get("metadata");
-        if (md is null || md.GetType() != Json::Type::Object) {
-            Json::Value @newMd = Json::Object();
-            newMd["units"] = (g_Player.path.meta.unitsBlocks ? "blocks" : "world");
-            newMd["fps"] = g_Player.path.meta.fps;
-            newMd["loop"] = g_Player.path.meta.loop;
-            root2["metadata"] = newMd;
-            @md = root2["metadata"];
-        }
-
-        float t = _NormalizedTimeForSave();
-        md["start_offset"] = t;
-
-        if (S_SaveRateInProfile) {
-            md["speed"] = g_Player.rate;
-        }
-
-        md["last_saved_ms"] = int(Time::Now);
-
-        if (backupBeforeOverwrite) {
-            string bak = resolved + ".bak." + tostring(Time::Now);
-            IO::File fb(bak, IO::FileMode::Write);
-            fb.Write(src);
-            fb.Close();
-        }
-
-        string json = Json::Write(root2);
-        IO::File fo(resolved, IO::FileMode::Write);
-        fo.Write(json);
-        fo.Close();
-
-        NotifyInfo("Saved progress to: " + Path::GetFileName(resolved));
-        log("SaveProgressToCurrentProfile: wrote start_offset=" + Text::Format("%.3f", t) + " into " + resolved, LogLevel::Info, -1, "PathUI::SaveProgressToCurrentProfile");
-    }
-
 
 
 
