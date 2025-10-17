@@ -180,14 +180,14 @@ namespace PathCam {
 
     vec2 DirToAngles(const vec3 &in dir) {
         vec3 nd = dir.Normalized();
+        if (nd.Length() <= 1e-6) return vec2(0, 0);
+
         vec3 xz = vec3(nd.x, 0, nd.z);
         float lenxz = xz.Length();
         if (lenxz <= 1e-6) return vec2(0, 0);
 
-        xz = xz / lenxz;
-        float pitch = -Math::Asin(Math::Dot(nd, vec3(0, 1, 0)));
-        float yaw = Math::Asin(Math::Dot(xz, vec3(1, 0, 0)));
-        if (Math::Dot(xz, vec3(0, 0, -1)) > 0) yaw = -yaw - Math::PI;
+        float yaw   = Math::Atan2(-nd.z, nd.x);
+        float pitch = -Math::Asin(nd.y);
         return vec2(yaw, pitch);
     }
 

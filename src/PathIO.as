@@ -96,6 +96,14 @@ namespace PathCam {
         string units = "world";
         ReadString(md, "units", units, units);
         meta.unitsBlocks = units.ToLower().StartsWith("block");
+
+        float so = meta.startOffset;
+        bool gotSO = false;
+             if (ReadFloat(md, "start_offset", so, so)) gotSO = true;
+        else if (ReadFloat(md, "start", so, so)) gotSO = true;
+        else if (ReadFloat(md, "offset", so, so)) gotSO = true;
+        else if (ReadFloat(md, "resume_time", so, so)) gotSO = true;
+        if (gotSO) meta.startOffset = Math::Max(0.0, so);
     }
 
     vec3 AsWorld(const PathMetadata &in meta, const vec3 &in v) {
@@ -326,67 +334,119 @@ namespace PathCam {
         }
 
         if (!IO::FileExists(abs)) {
-            log("LoadPath: not found '" + fileOrRel + "' (also looked in " + PathsDir() + ")", LogLevel::Error, 329, "LoadPath");
+            log("LoadPath: not found '" + fileOrRel + "' (also looked in " + PathsDir() + ")", LogLevel::Error, -1, "PathCam::LoadPath");
             return false;
         }
 
-        log("LoadPath: opening " + abs, LogLevel::Info, 333, "LoadPath");
+        log("LoadPath: opening " + abs, LogLevel::Info, -1, "PathCam::LoadPath");
 
         IO::File f(abs, IO::FileMode::Read);
         string blob = f.ReadToEnd();
         f.Close();
 
         if (blob.Length == 0) {
-            log("LoadPath: empty file: " + abs, LogLevel::Error, 340, "LoadPath");
+            log("LoadPath: empty file: " + abs, LogLevel::Error, -1, "PathCam::LoadPath");
             return false;
         }
 
         auto @root = Json::Parse(blob);
         if (root is null || root.GetType() != Json::Type::Object) {
-            log("LoadPath: JSON parse failed or root is not an object: " + abs, LogLevel::Error, 346, "LoadPath");
+            log("LoadPath: JSON parse failed or root is not an object: " + abs, LogLevel::Error, -1, "PathCam::LoadPath");
             return false;
+        }
+
+        string mtest = "";
+        ReadString(root, "mode", mtest, mtest);
+        auto @resumeObj = root.Get("resume");
+        bool isResume = (mtest.ToLower().StartsWith("resume") || (resumeObj !is null && resumeObj.GetType() == Json::Type::Object));
+        if (isResume) {
+            auto @r = (resumeObj !is null && resumeObj.GetType() == Json::Type::Object) ? resumeObj : root;
+
+            string baseFile = "";
+            if (!ReadString(r, "file", baseFile, "")) {
+                log("LoadPath[resume]: missing 'file' field", LogLevel::Error, -1, "PathCam::LoadPath");
+                return false;
+            }
+
+            float startOff = 0.0; ReadFloat(r, "time", startOff, 0.0);
+            float startOff2; if (ReadFloat(r, "start_offset", startOff2, startOff)) startOff = startOff2;
+            bool loopOverride; bool hasLoop = ReadBool(r, "loop", loopOverride, false);
+            float rateOverride; bool hasRate = ReadFloat(r, "rate", rateOverride, -1.0);
+
+            CameraPath base;
+            if (!LoadPath(baseFile, base)) {
+                log("LoadPath[resume]: failed to load base '" + baseFile + "'", LogLevel::Error, -1, "PathCam::LoadPath");
+                return false;
+            }
+
+            base.meta.startOffset = Math::Max(0.0, startOff);
+            if (hasLoop) base.meta.loop = loopOverride;
+            if (hasRate && rateOverride > 0.0) base.meta.speed = rateOverride;
+
+            string nm = "";
+            ReadString(root, "name", nm, "");
+            if (nm.Length > 0) base.name = nm;
+            else base.name = base.name + " (resume @ " + Text::Format("%.0f", startOff) + "s)";
+
+            path = base;
+            log("LoadPath[resume]: loaded base='" + baseFile + "', start_offset=" + Text::Format("%.3f", path.meta.startOffset), LogLevel::Info, -1, "PathCam::LoadPath");
+            return true;
         }
 
         auto @ver = root.Get("version");
         if (ver !is null && ver.GetType() != Json::Type::Null) path.version = int(ver);
-
         ReadString(root, "name", path.name, "");
 
-        string mode = "keyframes";
-        ReadString(root, "mode", mode, mode);
-        path.mode = mode.ToLower().StartsWith("fn") ? PathMode::Fn : PathMode::Keyframes;
+        string modeStr = "";
+        ReadString(root, "mode", modeStr, "");
+        auto @fnObjCheck = root.Get("fn");
+        auto @kfArrCheck = root.Get("keyframes");
+        bool hasFnObj = (fnObjCheck !is null && fnObjCheck.GetType() == Json::Type::Object);
+        bool hasKfArr = (kfArrCheck !is null && kfArrCheck.GetType() == Json::Type::Array);
+
+        PathMode detected = PathMode::Keyframes;
+        string ms = modeStr.ToLower();
+
+        if (ms.StartsWith("fn")) {
+            detected = PathMode::Fn;
+        } else if (ms.StartsWith("key")) {
+            detected = PathMode::Keyframes;
+            if (hasFnObj && !hasKfArr) {
+                detected = PathMode::Fn;
+                log("LoadPath: corrected mode to 'fn' (file declared 'keyframes' but no keyframes; fn block present).", LogLevel::Warn, -1, "PathCam::LoadPath");
+            }
+        } else {
+            if (hasFnObj && !hasKfArr) detected = PathMode::Fn;
+            else if (hasKfArr)         detected = PathMode::Keyframes;
+            else                       detected = PathMode::Fn;
+        }
+        path.mode = detected;
 
         auto @md = root.Get("metadata");
         ParseMetadata(md, path.meta);
+
+        if (path.meta.startOffset > 0.0) {
+            log("LoadPath: start_offset=" + Text::Format("%.3f", path.meta.startOffset), LogLevel::Info, -1, "PathCam::LoadPath");
+        }
 
         if (path.meta.duration <= 0.0) {
             float topDur;
             if (ReadFloat(root, "duration", topDur, -1.0) && topDur > 0.0) {
                 path.meta.duration = topDur;
-                log("LoadPath: using top-level duration=" + Text::Format("%.3f", topDur), LogLevel::Info, 366, "LoadPath");
+                log("LoadPath: using top-level duration=" + Text::Format("%.3f", topDur), LogLevel::Info, -1, "PathCam::LoadPath");
             }
         }
 
         bool ok = false;
         if (path.mode == PathMode::Keyframes) {
             ok = LoadKeyframes(root, path);
-            if (!ok) {
-                log("LoadPath: no/invalid keyframes in " + abs, LogLevel::Error, 374, "LoadPath");
-                return false;
+            if (!ok && hasFnObj) {
+                path.mode = PathMode::Fn;
+                log("LoadPath: keyframes missing; falling back to 'fn' mode.", LogLevel::Warn, -1, "PathCam::LoadPath");
             }
+        }
 
-            if (path.meta.duration <= 0.0 && path.keys.Length > 0) {
-                path.meta.duration = path.keys[path.keys.Length - 1].t;
-                log("LoadPath: inferred duration from last keyframe: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, 380, "LoadPath");
-            }
-
-            if (path.keys.Length == 0) {
-                log("LoadPath: keyframes mode but keys.Length == 0", LogLevel::Error, 384, "LoadPath");
-                return false;
-            }
-
-            ok = true;
-        } else {
+        if (path.mode == PathMode::Fn) {
             LoadFn(root, path);
 
             if (path.meta.duration <= 0.0) {
@@ -394,7 +454,7 @@ namespace PathCam {
                 float fnDur;
                 if (ReadFloat(fnObj, "duration", fnDur, -1.0) && fnDur > 0.0) {
                     path.meta.duration = fnDur;
-                    log("LoadPath: used fn.duration=" + Text::Format("%.3f", fnDur) + "s", LogLevel::Info, 397, "LoadPath");
+                    log("LoadPath: used fn.duration=" + Text::Format("%.3f", fnDur) + "s", LogLevel::Info, -1, "PathCam::LoadPath");
                 }
             }
 
@@ -404,52 +464,67 @@ namespace PathCam {
                     float dps = Math::Abs(path.fnCircle.degPerSec);
                     if (dps > 0.0) {
                         path.meta.duration = 360.0 / dps;
-                        log("LoadPath: derived duration for orbital_circle: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, 407, "LoadPath");
+                        log("LoadPath: derived duration for orbital_circle: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, -1, "PathCam::LoadPath");
                     }
                 } else if (fn == "orbital_helix") {
                     float dps = Math::Abs(path.fnHelix.degPerSec);
                     if (dps > 0.0) {
                         path.meta.duration = 360.0 / dps;
-                        log("LoadPath: derived duration for orbital_helix: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, 413, "LoadPath");
+                        log("LoadPath: derived duration for orbital_helix: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, -1, "PathCam::LoadPath");
                     }
                 } else if (fn == "target_polyline") {
                     if (path.fnPolyline.totalLen > 0.0 && path.fnPolyline.speed > 0.0) {
                         path.meta.duration = path.fnPolyline.totalLen / path.fnPolyline.speed;
-                        log("LoadPath: derived duration from polyline length: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, 418, "LoadPath");
+                        log("LoadPath: derived duration from polyline length: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, -1, "PathCam::LoadPath");
+                    }
+                } else if (fn == "vertical_ascent") {
+                    float delta = Math::Abs(path.fnAscent.distEnd - path.fnAscent.distStart);
+                    if (path.fnAscent.distRate > 0.0 && delta > 0.0) {
+                        path.meta.duration = delta / path.fnAscent.distRate;
+                        log("LoadPath: derived duration for vertical_ascent from dist_rate: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, -1, "PathCam::LoadPath");
+                    } else if (Math::Abs(path.fnAscent.degPerSec) > 0.0) {
+                        path.meta.duration = 360.0 / Math::Abs(path.fnAscent.degPerSec);
+                        log("LoadPath: derived duration for vertical_ascent from deg_per_sec: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, -1, "PathCam::LoadPath");
                     }
                 }
             }
 
-            if (path.fnName.Length == 0) { log("LoadPath: fn-mode but no fn.name specified", LogLevel::Error, 423, "LoadPath"); return false; }
-            if (path.meta.duration <= 0.0) { log("LoadPath: fn-mode requires metadata.duration>0 (or derivable), currently duration=" + Text::Format("%.3f", path.meta.duration), LogLevel::Error, 424, "LoadPath"); return false; }
+            if (path.fnName.Length == 0) {
+                log("LoadPath: fn-mode but no fn.name specified", LogLevel::Error, -1, "PathCam::LoadPath");
+                return false;
+            }
+            if (path.meta.duration <= 0.0) {
+                log("LoadPath: fn-mode requires metadata.duration>0 (or derivable), currently duration=" + Text::Format("%.3f", path.meta.duration), LogLevel::Error, -1, "PathCam::LoadPath");
+                return false;
+            }
 
             ok = true;
+        } else if (path.mode == PathMode::Keyframes) {
+            if (!ok) {
+                log("LoadPath: keyframes mode but LoadKeyframes failed / had no keyframes", LogLevel::Error, -1, "PathCam::LoadPath");
+                return false;
+            }
+            if (path.meta.duration <= 0.0 && path.keys.Length > 0) {
+                path.meta.duration = path.keys[path.keys.Length - 1].t;
+                log("LoadPath: inferred duration from last keyframe: " + Text::Format("%.3f", path.meta.duration) + "s", LogLevel::Info, -1, "PathCam::LoadPath");
+            }
         }
 
-        bool loopVal = path.meta.loop;
-        bool haveLoop = false;
+        bool anyLoop = path.meta.loop;
+        bool b;
 
-        auto @mdObj   = root.Get("metadata");
-        auto @fnObj   = root.Get("fn");
-        bool tmpLoop;
+        auto @md2 = root.Get("metadata");
+        if (ReadBool(md2, "loop", b, false)) anyLoop = anyLoop || b;
 
-        if (ReadBool(mdObj, "loop", tmpLoop, loopVal) || ReadBool(mdObj, "Loop", tmpLoop, loopVal)) {
-            loopVal = tmpLoop;
-            haveLoop = true;
-        }
+        if (ReadBool(root, "loop", b, false)) anyLoop = anyLoop || b;
 
-        if (!haveLoop && (ReadBool(root, "loop", tmpLoop, loopVal) || ReadBool(root, "Loop", tmpLoop, loopVal))) {
-            loopVal = tmpLoop;
-            haveLoop = true;
-        }
+        auto @fnObj2 = root.Get("fn");
+        if (ReadBool(fnObj2, "loop", b, false)) anyLoop = anyLoop || b;
 
-        if (!haveLoop && (ReadBool(fnObj, "loop", tmpLoop, loopVal) || ReadBool(fnObj, "Loop", tmpLoop, loopVal))) {
-            loopVal = tmpLoop;
-            haveLoop = true;
-        }
+        path.meta.loop = anyLoop;
 
-        path.meta.loop = loopVal;
-        log("LoadPath: loop=" + (path.meta.loop ? "true" : "false") + (haveLoop ? "" : " (default)"), LogLevel::Info, 452, "LoadPath");
+        log("LoadPath: loop=" + (path.meta.loop ? "true" : "false"), LogLevel::Info, -1, "PathCam::LoadPath");
+
 
         if (path.name.Length == 0) {
             string fileOnly = Path::GetFileName(abs);
@@ -457,8 +532,7 @@ namespace PathCam {
             if (dotIx > 0) path.name = fileOnly.SubStr(0, dotIx); else path.name = fileOnly;
         }
 
-        if (!ok) { log("LoadPath: final validation failed for " + abs, LogLevel::Error, 460, "LoadPath"); return false; }
-        log("LoadPath: loaded '" + path.name + "' (mode=" + (path.mode==PathMode::Keyframes ? "keyframes" : "fn") + ", duration=" + Text::Format("%.3f", path.meta.duration) + "s, fps=" + Text::Format("%.2f", path.meta.fps) + ")", LogLevel::Info, 461, "LoadPath");
+        log("LoadPath: loaded '" + path.name + "' (mode=" + (path.mode==PathMode::Keyframes ? "keyframes" : "fn") + ", duration=" + Text::Format("%.3f", path.meta.duration) + "s, fps=" + Text::Format("%.2f", path.meta.fps) + (path.meta.startOffset > 0.0 ? ", start_offset=" + Text::Format("%.3f", path.meta.startOffset) : "") + ")", LogLevel::Info, -1, "PathCam::LoadPath");
 
         return true;
     }

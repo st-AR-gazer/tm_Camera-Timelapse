@@ -40,24 +40,68 @@ namespace PathCam {
         void LoadFromFile(const string &in fileOrRel) {
             CameraPath p;
             bool ok = LoadPath(fileOrRel, p);
-            log("Player.LoadFromFile: LoadPath returned " + tostring(ok), ok ? LogLevel::Info : LogLevel::Error, 43, "LoadFromFile");
+            log("Player.LoadFromFile: LoadPath returned " + tostring(ok), ok ? LogLevel::Info : LogLevel::Error, -1, "Player::LoadFromFile");
 
-            if (ok) {
-                float prevRate = rate;
-                this.path = p;
-                this.loaded = true;
+            if (!ok) { this.loaded = false; return; }
 
-                if (S_PersistRate) {
-                    this.rate = prevRate;
-                } else {
-                    this.rate = p.meta.speed;
-                    if (this.rate <= 0.0) this.rate = 1.0;
-                }
+            float prevRate = rate;
+            this.path   = p;
+            this.loaded = true;
 
-                Reset();
+            if (S_PersistRate) {
+                this.rate = prevRate;
             } else {
-                this.loaded = false;
+                this.rate = p.meta.speed;
+                if (this.rate <= 0.0) this.rate = 1.0;
             }
+
+            Reset();
+
+            Seek(this.path.meta.startOffset);
+            log("LoadFromFile: sought to startOffset=" + Text::Format("%.3f", this.path.meta.startOffset) + " (mode=" + (this.path.mode==PathMode::Fn ? "fn" : "keyframes") + ")", LogLevel::Info, -1, "Player::LoadFromFile");
+        }
+
+        void Seek(float t) {
+            if (!loaded) return;
+
+            float dur = Duration();
+            if (path.meta.loop && dur > 0.0) {
+                t = t - dur * Math::Floor(t / dur);
+                if (t < 0.0) t += dur;
+            } else {
+                t = Math::Clamp(t, 0.0, dur);
+            }
+
+            time = t;
+            frameIndex = (path.meta.fps > 0.0 ? int(Math::Round(time * path.meta.fps)) : 0);
+
+            CamKey k = EvaluateAt(time);
+
+            auto editor = cast<CGameCtnEditorFree>(GetApp().Editor);
+            bool hadCustomProc = false;
+            if (editor !is null) {
+                hadCustomProc = editor.PluginMapType.EnableEditorInputsCustomProcessing;
+            }
+
+            bool tempEnabled = false;
+            if (editor !is null && !hadCustomProc) {
+                Editor::EnableCustomCameraInputs();
+                tempEnabled = true;
+            }
+
+            Editor::SetTargetedDistance(k.dist);
+            Editor::SetTargetedPosition(k.target);
+            Editor::SetOrbitalAngle(k.h, k.v);
+
+            if (tempEnabled && !playing) {
+                Editor::DisableCustomCameraInputs();
+            }
+
+            _lastApplied = k;
+            _haveLastApplied = true;
+            _blendActive = false;
+
+            // log("Seek: t=" + Text::Format("%.3f", t) + " target=" + tostring(k.target) + " dist=" + Text::Format("%.2f", k.dist) + " h=" + Text::Format("%.3f", k.h) + " v=" + Text::Format("%.3f", k.v), LogLevel::Debug, -1, "Player::Seek");
         }
 
         void Play() {
@@ -79,26 +123,6 @@ namespace PathCam {
 
         float Duration() const {
             return Math::Max(0.0, path.meta.duration);
-        }
-
-        void Seek(float t) {
-            if (!loaded) return;
-            float dur = Duration();
-            if (path.meta.loop && dur > 0.0) {
-                t = t - dur * Math::Floor(t / dur);
-                if (t < 0.0) t += dur;
-            } else {
-                t = Math::Clamp(t, 0.0, dur);
-            }
-            time = t;
-            frameIndex = int(Math::Round(time * path.meta.fps));
-            CamKey k = EvaluateAt(time);
-            Editor::SetTargetedDistance(k.dist);
-            Editor::SetTargetedPosition(k.target);
-            Editor::SetOrbitalAngle(k.h, k.v);
-            _lastApplied = k;
-            _haveLastApplied = true;
-            _blendActive = false;
         }
 
         CamKey LerpCamKey(const CamKey &in a, const CamKey &in b, float u) {

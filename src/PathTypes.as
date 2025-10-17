@@ -70,6 +70,7 @@ namespace PathCam {
         float speed       = 1.0;
         InterpMode interp = InterpMode::CatmullRom;
         bool unitsBlocks  = false;
+        float startOffset = 0.0;
     }
 
     class FnCircle {
