@@ -108,7 +108,7 @@ namespace PathCam {
         f.Close();
 
         NotifyInfo("Saved resume snapshot: " + outName);
-        log("SavePartialResume: wrote " + outPath, LogLevel::Info, -1, "PathUI::SavePartialResume");
+        log("SavePartialResume: wrote " + outPath, LogLevel::Info, 111, "SavePartialResume");
         RefreshFiles();
     }
 
@@ -190,10 +190,10 @@ namespace PathCam {
             if (PathCam::g_Player.loaded) {
                 g_LastLoadedFile = g_SelectedFile;
                 NotifyInfo("Loaded: " + PathCam::g_Player.path.name + " (" + Text::Format("%.2f", PathCam::g_Player.Duration()) + "s)");
-                log("UI loaded: " + g_SelectedFile, LogLevel::Info, -1, "PathUI::PathTab");
+                log("UI loaded: " + g_SelectedFile, LogLevel::Info, 193, "PathTab");
             } else {
                 NotifyError("Failed to load: " + g_SelectedFile);
-                log("UI failed to load: " + g_SelectedFile, LogLevel::Error, -1, "PathUI::PathTab");
+                log("UI failed to load: " + g_SelectedFile, LogLevel::Error, 196, "PathTab");
             }
         }
 

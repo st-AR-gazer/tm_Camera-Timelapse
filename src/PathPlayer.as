@@ -40,7 +40,7 @@ namespace PathCam {
         void LoadFromFile(const string &in fileOrRel) {
             CameraPath p;
             bool ok = LoadPath(fileOrRel, p);
-            log("Player.LoadFromFile: LoadPath returned " + tostring(ok), ok ? LogLevel::Info : LogLevel::Error, -1, "Player::LoadFromFile");
+            log("Player.LoadFromFile: LoadPath returned " + tostring(ok), ok ? LogLevel::Info : LogLevel::Error, 43, "LoadFromFile");
 
             if (!ok) { this.loaded = false; return; }
 
@@ -58,7 +58,7 @@ namespace PathCam {
             Reset();
 
             Seek(this.path.meta.startOffset);
-            log("LoadFromFile: sought to startOffset=" + Text::Format("%.3f", this.path.meta.startOffset) + " (mode=" + (this.path.mode==PathMode::Fn ? "fn" : "keyframes") + ")", LogLevel::Info, -1, "Player::LoadFromFile");
+            log("LoadFromFile: sought to startOffset=" + Text::Format("%.3f", this.path.meta.startOffset) + " (mode=" + (this.path.mode==PathMode::Fn ? "fn" : "keyframes") + ")", LogLevel::Info, 61, "LoadFromFile");
         }
 
         void Seek(float t) {
@@ -101,11 +101,11 @@ namespace PathCam {
             _haveLastApplied = true;
             _blendActive = false;
 
-            // log("Seek: t=" + Text::Format("%.3f", t) + " target=" + tostring(k.target) + " dist=" + Text::Format("%.2f", k.dist) + " h=" + Text::Format("%.3f", k.h) + " v=" + Text::Format("%.3f", k.v), LogLevel::Debug, -1, "Player::Seek");
+            // log("Seek: t=" + Text::Format("%.3f", t) + " target=" + tostring(k.target) + " dist=" + Text::Format("%.2f", k.dist) + " h=" + Text::Format("%.3f", k.h) + " v=" + Text::Format("%.3f", k.v), LogLevel::Debug, 104, "Seek");
         }
 
         void Play() {
-            if (!loaded) { log("Play() called but no path loaded", LogLevel::Warn, 64, "Play"); return; }
+            if (!loaded) { log("Play() called but no path loaded", LogLevel::Warn, 108, "Play"); return; }
             playing = true;
             Editor::EnableCustomCameraInputs();
         }
@@ -147,15 +147,15 @@ namespace PathCam {
             }
 
             if (hasFn) {
-                if (S_WarnModeMismatchOnce && !_warnedModeMismatch) { _warnedModeMismatch = true; log("EvaluateAt: mode mismatch; falling back to fn='" + path.fnName + "'", LogLevel::Warn, 126, "Seek"); }
+                if (S_WarnModeMismatchOnce && !_warnedModeMismatch) { _warnedModeMismatch = true; log("EvaluateAt: mode mismatch; falling back to fn='" + path.fnName + "'", LogLevel::Warn, 150, "Stop"); }
                 return EvalFn(path, t);
             }
             if (hasKeys) {
-                if (S_WarnModeMismatchOnce && !_warnedModeMismatch) { _warnedModeMismatch = true; log("EvaluateAt: mode mismatch; falling back to keyframes", LogLevel::Warn, 130, "Seek"); }
+                if (S_WarnModeMismatchOnce && !_warnedModeMismatch) { _warnedModeMismatch = true; log("EvaluateAt: mode mismatch; falling back to keyframes", LogLevel::Warn, 154, "Stop"); }
                 return EvalKeyframes(path, t);
             }
 
-            if (!_warnedNoData) { _warnedNoData = true; log("EvaluateAt: no fn and no keyframes available; returning safe frame", LogLevel::Error, 134, "Seek"); }
+            if (!_warnedNoData) { _warnedNoData = true; log("EvaluateAt: no fn and no keyframes available; returning safe frame", LogLevel::Error, 158, "Stop"); }
 
             CamKey safe;
             safe.t = t;
