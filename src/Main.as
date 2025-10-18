@@ -10,6 +10,7 @@ bool wasInEditor = false;
 void Update(float dt) {
     PathCam::g_Player.Update(dt / 1000.0f);
     PathCam::UpdateAutosaveTick();
+    PathCam::UpdateAutoLightsTick();
 
     bool isInEditor = cast<CGameCtnEditorFree>(GetApp().Editor) !is null;
     if (wasInEditor && !isInEditor) {

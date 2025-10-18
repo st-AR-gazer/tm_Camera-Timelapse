@@ -34,3 +34,18 @@ bool S_SaveRateInProfile = false;
 
 [Setting category="Camera" name="Make a backup before overwriting profile"]
 bool S_BackupBeforeOverwrite = true;
+
+// Lighting
+[Setting category="Lighting" name="Auto compute lights (Compute Shadows)"]
+bool S_AutoComputeLights = false;
+
+[Setting category="Lighting" name="Interval (minutes)" min=1 max=1440]
+float S_AutoLightsEveryMin = 30.0f;
+
+[Setting category="Lighting" name="Notify when computing"]
+bool S_NotifyAutoLights = true;
+
+[Setting category="Lighting" name="Shadow Quality" description="Quality level for shadow/lighting computation"]
+int S_ShadowQuality = 0;
+
+uint64 g_LastAutoLightsMs = 0;

@@ -6,6 +6,8 @@ namespace PathCam {
     string g_LastLoadedFile = "";
     uint64 g_LastAutoSaveMs = 0;
 
+    float g_TargetClipSeconds = 0.0f;
+
     void RefreshFiles() {
         g_Files = ListPathFiles();
         if (g_Files.Length > 0 && (g_SelectedFile.Length == 0 || g_Files.Find(g_SelectedFile) < 0)) {
@@ -29,6 +31,80 @@ namespace PathCam {
     void OnEditorExit() {
         if (!S_AutoSaveOnEditorExit || !g_Player.loaded) return;
         SavePartialResume();
+    }
+
+    string _FmtHMS(uint64 msLeft) {
+        uint s = uint(msLeft / 1000);
+        uint h = s / 3600; s %= 3600;
+        uint m = s / 60;   s %= 60;
+        string hs = Text::Format("%02d", int(h));
+        string ms = Text::Format("%02d", int(m));
+        string ss = Text::Format("%02d", int(s));
+        return hs + ":" + ms + ":" + ss;
+    }
+
+    CGameEditorPluginMap::EShadowsQuality _GetShadowQuality() {
+        switch (S_ShadowQuality) {
+            case 0: return CGameEditorPluginMap::EShadowsQuality::VeryFast;
+            case 1: return CGameEditorPluginMap::EShadowsQuality::Fast;
+            case 2: return CGameEditorPluginMap::EShadowsQuality::Default;
+            case 3: return CGameEditorPluginMap::EShadowsQuality::High;
+            case 5: return CGameEditorPluginMap::EShadowsQuality::Ultra;
+            default: return CGameEditorPluginMap::EShadowsQuality::VeryFast;
+        }
+    }
+
+    string _GetShadowQualityName(int quality) {
+        switch (quality) {
+            case 0: return "Very Fast";
+            case 1: return "Fast";
+            case 2: return "Default";
+            case 3: return "High";
+            case 4: return "Ultra";
+            default: return "Very Fast";
+        }
+    }
+
+    void _ComputeLightsNow_Internal() {
+        auto editor = cast<CGameCtnEditorFree>(GetApp().Editor);
+        if (editor is null) {
+            NotifyWarn("Compute lights is only available in the Editor.");
+            return;
+        }
+        auto plug = editor.PluginMapType;
+        if (plug is null) {
+            NotifyWarn("Editor plugin map is unavailable.");
+            return;
+        }
+        if (!plug.IsEditorReadyForRequest) {
+            NotifyWarn("Editor not ready for lighting request.");
+            return;
+        }
+
+        plug.ComputeShadows1(_GetShadowQuality());
+
+        g_LastAutoLightsMs = Time::Now;
+        if (S_NotifyAutoLights) NotifyInfo("Auto: computing lights…");
+    }
+
+    void UpdateAutoLightsTick() {
+        if (!S_AutoComputeLights) return;
+
+        auto editor = cast<CGameCtnEditorFree>(GetApp().Editor);
+        if (editor is null) return;
+
+        uint64 now = Time::Now;
+        if (g_LastAutoLightsMs == 0) {
+            g_LastAutoLightsMs = now;
+            return;
+        }
+
+        float mins = Math::Max(1.0f, S_AutoLightsEveryMin);
+        uint64 intervalMs = uint64(mins * 60000.0f);
+
+        if (now - g_LastAutoLightsMs >= intervalMs) {
+            _ComputeLightsNow_Internal();
+        }
     }
 
     string _IsoLocalNoColon() {
@@ -167,6 +243,7 @@ namespace PathCam {
                 _IO::File::CopyFileTo(selectedFiles[i], PathsDir() + "/" + Path::GetFileName(selectedFiles[i]), true);
             }
             selectedFiles.RemoveRange(0, selectedFiles.Length);
+            RefreshFiles();
         }
 
         UI::Separator();
@@ -189,6 +266,7 @@ namespace PathCam {
             PathCam::g_Player.LoadFromFile(g_SelectedFile);
             if (PathCam::g_Player.loaded) {
                 g_LastLoadedFile = g_SelectedFile;
+                g_TargetClipSeconds = 0.0f;
                 NotifyInfo("Loaded: " + PathCam::g_Player.path.name + " (" + Text::Format("%.2f", PathCam::g_Player.Duration()) + "s)");
                 log("UI loaded: " + g_SelectedFile, LogLevel::Info, 193, "PathTab");
             } else {
@@ -238,7 +316,93 @@ namespace PathCam {
             UI::Text("Mode: " + (g_Player.path.mode == PathMode::Keyframes ? "keyframes" : "fn"));
             UI::Text("FPS: " + Text::Format("%.2f", g_Player.path.meta.fps) + "  Loop: " + (g_Player.path.meta.loop ? "Yes" : "No"));
             UI::Text("Duration: " + Text::Format("%.2f s", dur));
+
+            if (dur > 0.0f) {
+                float clipSecs  = (g_Player.rate > 0.0f ? dur / g_Player.rate : 0.0f);
+
+                if (g_TargetClipSeconds <= 0.0f) {
+                    g_TargetClipSeconds = clipSecs;
+                }
+
+                float inputOld = g_TargetClipSeconds;
+                float inputNew = UI::InputFloat("Target clip duration (s)", inputOld, 1.0f, 10.0f, "%.3f");
+                if (inputNew != inputOld) {
+                    g_TargetClipSeconds = Math::Max(0.001f, inputNew);
+                    float newRate = dur / g_TargetClipSeconds;
+                    newRate = Math::Clamp(newRate, S_RateMin, S_RateMax);
+                    if (newRate != g_Player.rate) {
+                        g_Player.rate = newRate;
+                        S_DefaultRate = newRate;
+                        clipSecs = (g_Player.rate > 0.0f ? dur / g_Player.rate : 0.0f);
+                    }
+                }
+
+                float clipHours = clipSecs / 3600.0f;
+                int hh = int(Math::Floor(clipSecs / 3600.0));
+                int mm = int(Math::Floor((clipSecs - hh * 3600) / 60.0));
+                int ss = int(Math::Round(clipSecs - hh * 3600 - mm * 60));
+
+                string secsStr  = Text::Format("%.2f s", clipSecs);
+                string hhStr    = Text::Format("%02d", hh);
+                string mmStr    = Text::Format("%02d", mm);
+                string ssStr    = Text::Format("%02d", ss);
+                string timeStr  = hhStr + ":" + mmStr + ":" + ssStr;
+                string hoursStr = Text::Format("%.3f", clipHours);
+
+                UI::Text("\\$888At current rate: ~ " + secsStr + " (" + timeStr + ") = " + hoursStr + " h");
+            } else {
+                UI::TextDisabled("Target clip duration unavailable (path duration is 0).");
+            }
         }
+
+        UI::Separator();
+        UI::Text("Lighting (independent)");
+
+        bool oldAuto = S_AutoComputeLights;
+        bool chkAuto = UI::Checkbox("Auto compute lights", S_AutoComputeLights);
+        if (chkAuto != oldAuto) S_AutoComputeLights = chkAuto;
+
+        UI::SameLine();
+        float oldMins = S_AutoLightsEveryMin;
+        float newMins = UI::InputFloat("every (min)", oldMins, 1.0f, 10.0f, "%.1f");
+        if (newMins != oldMins) {
+            S_AutoLightsEveryMin = Math::Clamp(newMins, 1.0f, 1440.0f);
+        }
+
+        int oldQuality = S_ShadowQuality;
+        if (UI::BeginCombo("Shadow Quality", _GetShadowQualityName(S_ShadowQuality))) {
+            for (int i = 0; i <= 5; i++) {
+                bool selected = (i == S_ShadowQuality);
+                if (UI::Selectable(_GetShadowQualityName(i), selected)) {
+                    S_ShadowQuality = i;
+                }
+                if (selected) UI::SetItemDefaultFocus();
+            }
+            UI::EndCombo();
+        }
+
+        if (UI::Button(Icons::LightbulbO + " Compute lights now")) {
+            _ComputeLightsNow_Internal();
+        }
+
+        uint64 nowMs = Time::Now;
+        string lastStr = (g_LastAutoLightsMs == 0
+            ? "never"
+            : Text::Format("%.1f", float(nowMs - g_LastAutoLightsMs) / 1000.0f) + " s ago");
+
+        string nextStr = "n/a";
+        if (S_AutoComputeLights) {
+            float mins = Math::Max(1.0f, S_AutoLightsEveryMin);
+            uint64 intervalMs = uint64(mins * 60000.0f);
+            uint64 due = (g_LastAutoLightsMs == 0 ? nowMs + intervalMs : g_LastAutoLightsMs + intervalMs);
+            if (due > nowMs) {
+                nextStr = _FmtHMS(due - nowMs) + " (HH:MM:SS)";
+            } else {
+                nextStr = "due now";
+            }
+        }
+        UI::Text("\\$888Last compute: " + lastStr + "   |   Next: " + nextStr);
+
         UI::EndDisabled();
     }
 
