@@ -1,24 +1,8 @@
-"""
-Map Together log inspector (structure-aware; pos/dir for blocks; item transforms)
-
-- Fast meta scan (payload lazy-read)
-- Tabs per type + All Records; every tab has a resizable side panel (details + hex)
-- Hex view shows the *entire record* (header+payload+meta) as: offset | hex | ASCII
-- Decoders:
-  * ChatMsg, Admin_SetActionLimit: exact
-  * Place/Delete/SetSkin: section counts (BLKs/SKNs/ITMs) + entries
-      Blocks: name, collection, u32_after_name, dir, coord_nat3, pos/pyr/scale/pivot hints
-      Items:  name, collection, coord_nat3, dir, pos vec3, pyr vec3, scale, pivot vec3,
-              tail flags (isFlying, variantIx) when detected
-  * Heuristic helpers: LPStrings, GUID/.sk refs, transform-window snapshots
-"""
-
 import os
 import sys
 import time
 import json
 import math
-import re
 import struct
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -57,6 +41,12 @@ MT_NAMES: Dict[int, str] = {
     22: "ServerStats",
 }
 
+def type_name(tid: int) -> str:
+    return MT_NAMES.get(tid, f"Unknown({tid})")
+
+def collection_name(idx: int) -> str:
+    return "Nadeo" if idx == 26 else f"#{idx}"
+
 @dataclass
 class Record:
     index: int
@@ -70,7 +60,7 @@ class Record:
 
     @property
     def type_name(self) -> str:
-        return MT_NAMES.get(self.type_id, f"Unknown({self.type_id})")
+        return type_name(self.type_id)
 
     def iso_time(self) -> str:
         try:
@@ -90,273 +80,242 @@ def hex_dump(chunk: bytes, base_off: int = 0, width: int = 16) -> str:
         row = chunk[i:i+width]
         hexes = " ".join(f"{b:02x}" for b in row)
         ascii_ = "".join(chr(b) if 32 <= b < 127 else "." for b in row)
-        lines.append(f"{base_off + i:08x}: {hexes:<{width*3}} {ascii_}")
+        lines.append(f"{base_off + i:08x}  {hexes:<{width*3}}  {ascii_}")
     return "\n".join(lines)
 
-def extract_lpstrings(payload: bytes, max_strings: int = 256) -> List[Tuple[int, str]]:
-    out = []
-    i, n = 0, len(payload)
-    while i + 2 <= n and len(out) < max_strings:
-        ln = int.from_bytes(payload[i:i+2], "little")
-        i2 = i + 2
-        if 0 < ln <= 0x7FFF and i2 + ln <= n:
-            raw = payload[i2:i2+ln]
-            txt = safe_decode(raw)
-            printable = sum(1 for c in raw if 32 <= c < 127)
-            if ln <= 2 or (printable / max(1, ln) >= 0.60):
-                out.append((i, txt))
-                i = i2 + ln
-                continue
-        i += 1
-    return out
+def rd_u16_le(b: bytes, o: int) -> int:
+    return int.from_bytes(b[o:o+2], "little")
 
-def find_guid_and_skin_refs(payload: bytes, limit=16):
+def rd_u32_le(b: bytes, o: int) -> int:
+    return int.from_bytes(b[o:o+4], "little")
+
+def rd_f32_le(b: bytes, o: int) -> float:
+    return struct.unpack_from("<f", b, o)[0]
+
+def is_ascii_printable(bs: bytes) -> bool:
+    for ch in bs:
+        if ch in (9, 10, 13):
+            continue
+        if ch < 32 or ch >= 127:
+            return False
+    return True
+
+def roundf(x: float, n: int = 6) -> float:
     try:
-        txt = payload.decode('utf-8', errors='ignore')
-    except:
-        return []
-    guids = re.findall(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', txt)
-    skins = re.findall(r'[0-9a-fA-F\-]{36}\.sk', txt)
-    out = []
-    for g in guids[:limit]:
-        out.append({"guid": g})
-    for s in skins[:max(0, limit-len(out))]:
-        out.append({"skin_ref": s})
-    return out
+        if math.isfinite(x):
+            return float(f"{x:.{n}f}")
+    except Exception:
+        pass
+    return x
 
-def float_triplet_candidates(payload: bytes, start=0, end=None, limit=8):
-    out=[]
-    if end is None: end = len(payload)
-    for i in range(start, end-12+1, 4):
-        f1,f2,f3 = struct.unpack_from('<fff', payload, i)
-        if all(math.isfinite(v) for v in (f1,f2,f3)):
-            if not (abs(f1)<1e-6 and abs(f2)<1e-6 and abs(f3)<1e-6):
-                if all(abs(v) < 1e7 for v in (f1,f2,f3)):
-                    out.append({"offset": i, "x": round(f1,4), "y": round(f2,4), "z": round(f3,4)})
-                    if len(out)>=limit: break
-    return out
+MAGIC_BLKS = b"BLKs"  # 0x734b4c42
+MAGIC_SKNs = b"SKNs"  # 0x734e4b53
+MAGIC_ITMs = b"ITMs"  # 0x734d5449
 
-def transform_window_candidates(payload: bytes, start=0, end=None, limit=3):
-    cand=[]
-    if end is None: end=len(payload)
-    for i in range(start, end-64+1, 4):
-        floats = struct.unpack_from('<16f', payload, i)
-        near1 = sum(1 for f in floats if abs(f-1.0) < 1e-4)
-        near0 = sum(1 for f in floats if abs(f) < 1e-5)
-        if near1 >= 3 and near0 >= 6:
-            tx_rm, ty_rm, tz_rm = floats[3], floats[7], floats[11]
-            tx_cm, ty_cm, tz_cm = floats[12], floats[13], floats[14]
-            cand.append({
-                "offset": i,
-                "near1": near1, "near0": near0,
-                "row_major_t": [round(tx_rm,4), round(ty_rm,4), round(tz_rm,4)],
-                "col_major_t": [round(tx_cm,4), round(ty_cm,4), round(tz_cm,4)],
-            })
-            if len(cand) >= limit: break
-    return cand
-
-def _find_sections(payload: bytes):
+def find_sections(payload: bytes) -> Dict[str, Dict[str, int]]:
     out = {}
-    for tag in (b"BLKs", b"SKNs", b"ITMs"):
-        p = payload.find(tag)
-        if p >= 0 and p + 6 <= len(payload):
-            out[tag.decode()] = {
-                "offset": p,
-                "count": int.from_bytes(payload[p+4:p+6], "little")
-            }
+    for tag, key in ((MAGIC_BLKS, "BLKs"), (MAGIC_SKNs, "SKNs"), (MAGIC_ITMs, "ITMs")):
+        i = payload.find(tag)
+        if i < 0:
+            out[key] = {"offset": -1, "count": 0}
+            continue
+        cnt_off = i + 4
+        cnt = rd_u16_le(payload, cnt_off) if cnt_off + 2 <= len(payload) else 0
+        out[key] = {"offset": i, "count": cnt, "count_offset": cnt_off}
     return out
 
-def _read_lpstring(b: bytes, p: int):
-    if p + 2 > len(b): return p, ""
-    ln = int.from_bytes(b[p:p+2], "little"); p += 2
-    if ln < 0 or p + ln > len(b): return p, ""
-    s = b[p:p+ln].decode("utf-8", "replace"); p += ln
-    return p, s
-
-def _find_next_lpstring_start(b: bytes, start: int, end: int, max_len: int = 96):
-    i = start
-    while i + 2 <= end:
-        ln = int.from_bytes(b[i:i+2], "little")
-        if 1 <= ln <= max_len and i + 2 + ln <= end:
-            raw = b[i+2:i+2+ln]
-            printable = sum(1 for x in raw if 32 <= x < 127)
-            if printable / ln >= 0.85:
-                return i
+def next_block_like_start(payload: bytes, search_from: int, hard_limit: int) -> Optional[int]:
+    i = max(0, search_from)
+    while i + 2 < hard_limit:
+        if i + 2 > len(payload):
+            return None
+        nlen = rd_u16_le(payload, i)
+        if 1 <= nlen <= 96 and i + 2 + nlen + 6 <= hard_limit:
+            name_b = payload[i+2:i+2+nlen]
+            if is_ascii_printable(name_b):
+                j = i + 2 + nlen
+                coll = rd_u32_le(payload, j)
+                if 0 <= coll <= 500:
+                    a_len_off = j + 4
+                    a_len = rd_u16_le(payload, a_len_off)
+                    if 0 <= a_len <= 128 and a_len_off + 2 + a_len <= hard_limit:
+                        author_b = payload[a_len_off+2:a_len_off+2+a_len]
+                        if is_ascii_printable(author_b):
+                            return i
         i += 1
     return None
 
-def _scan_nat3_near(b: bytes, start: int, end: int):
-    for i in range(start, max(start, end - 12) + 1):
-        x = int.from_bytes(b[i:i+4], "little")
-        y = int.from_bytes(b[i+4:i+8], "little")
-        z = int.from_bytes(b[i+8:i+12], "little")
-        if x < 4096 and y < 4096 and z < 4096:
-            return i, (x, y, z)
-    return None, None
+def parse_blocks(payload: bytes, blks_off: int, blks_count: int, section_end: int) -> Dict[str, Any]:
+    result = {"count": blks_count, "entries": []}
+    if blks_off < 0 or blks_count == 0:
+        return result
+    p = blks_off + 4 + 2
+    for bi in range(blks_count):
+        entry = {}
+        start_here = p
+        try:
+            name_len = rd_u16_le(payload, p); p += 2
+            name_off = p
+            name = safe_decode(payload[p:p+name_len]); p += name_len
 
-def _scan_dir_near(b: bytes, start: int, end: int):
-    for i in range(start, max(start, end - 4) + 1):
-        v = int.from_bytes(b[i:i+4], "little")
-        if v in (0,1,2,3,4,5,6,7):
-            return i, v
-    return None, None
+            coll_off = p
+            coll_idx = rd_u32_le(payload, p); p += 4
 
-def _scan_half_pi_near(b: bytes, start: int, end: int):
-    for i in range(start, max(start, end - 4) + 1):
-        f = struct.unpack_from("<f", b, i)[0]
-        if math.isfinite(f) and abs(abs(f) - math.pi/2) < 1e-3:
-            return i, round(f, 6)
-    return None, None
+            a_len = rd_u16_le(payload, p); p += 2
+            author_off = p
+            author = safe_decode(payload[p:p+a_len]); p += a_len
 
-def _parse_block_entries(payload: bytes, blks_off: int, count: int, next_off: int):
-    entries=[]
-    p = blks_off + 6
-    end = next_off
-    for i in range(count):
-        if p >= end: break
-        p1, name = _read_lpstring(payload, p)
-        if not name: break
-        p = p1
+            coord_off = p
+            x = rd_u32_le(payload, p); y = rd_u32_le(payload, p+4); z = rd_u32_le(payload, p+8); p += 12
 
-        u32_after_name = None
-        if p + 4 <= end:
-            u32_after_name = int.from_bytes(payload[p:p+4], "little"); p += 4
+            dir_off = p
+            dir_val = rd_u16_le(payload, p); p += 2
 
-        p, collection = _read_lpstring(payload, p)
+            pos_off = p
+            px = rd_f32_le(payload, p); py = rd_f32_le(payload, p+4); pz = rd_f32_le(payload, p+8); p += 12
 
-        if i < count - 1:
-            nx = _find_next_lpstring_start(payload, p, end)
-            region_end = nx if nx else end
-        else:
-            region_end = end
+            pyr_off = p
+            prx = rd_f32_le(payload, p); pry = rd_f32_le(payload, p+4); prz = rd_f32_le(payload, p+8); p += 12
 
-        off_nat3, nat3 = _scan_nat3_near(payload, p, region_end)
-        off_dir,  dirv = _scan_dir_near(payload, p, region_end)
-        off_hpi,  hpi  = _scan_half_pi_near(payload, p, region_end)
+            if bi < blks_count - 1:
+                nxt = next_block_like_start(payload, p, section_end)
+                end_this = nxt if nxt is not None else section_end
+            else:
+                end_this = section_end
 
-        pos=None; off_pos=None
-        for j in range(p, region_end-12+1, 4):
-            f1,f2,f3 = struct.unpack_from('<fff', payload, j)
-            if all(math.isfinite(x) for x in (f1,f2,f3)) and -50000 < f1 < 50000 and -50000 < f2 < 50000 and -50000 < f3 < 50000:
-                if abs(f1)+abs(f2)+abs(f3) > 1.0:
-                    pos=(round(f1,4), round(f2,4), round(f3,4)); off_pos=j; break
+            tail = payload[p:end_this] if end_this > p else b""
+            p = end_this
 
-        entry = {
-            "name": name,
-            "collection": collection,
-            "u32_after_name": u32_after_name,
-        }
-        if nat3:
-            entry["coord_nat3"] = {"x": nat3[0], "y": nat3[1], "z": nat3[2]}
-            entry["coord_nat3_offset"] = off_nat3
-        if dirv is not None:
-            entry["dir"] = dirv
-            entry["dir_offset"] = off_dir
-        if hpi is not None:
-            entry["rotation_hint_half_pi"] = hpi
-            entry["rotation_hint_offset"] = off_hpi
-        if pos:
-            entry["pos_hint"] = {"x": pos[0], "y": pos[1], "z": pos[2]}
-            entry["pos_hint_offset"] = off_pos
+            entry = {
+                "name": name,
+                "name_offset": name_off,
+                "collection_idx": coll_idx,
+                "collection_name": collection_name(coll_idx),
+                "collection_offset": coll_off,
+                "author": author,
+                "author_offset": author_off,
+                "coord_nat3": {"x": x, "y": y, "z": z},
+                "coord_nat3_offset": coord_off,
+                "dir": dir_val,
+                "dir_offset": dir_off,
+                "dir_degrees": int(dir_val % 8) * 45 if dir_val >= 4 else int(dir_val) * 90,
+                "pos": {"x": roundf(px), "y": roundf(py), "z": roundf(pz)},
+                "pos_offset": pos_off,
+                "pyr": {"x": roundf(prx), "y": roundf(pry), "z": roundf(prz)},
+                "pyr_degrees": {"x": roundf(math.degrees(prx)), "y": roundf(math.degrees(pry)), "z": roundf(math.degrees(prz))},
+                "pyr_offset": pyr_off,
+            }
+            if tail:
+                entry["tail_raw"] = {
+                    "offset": end_this - len(tail),
+                    "length": len(tail),
+                    "hex": payload[end_this-len(tail):end_this].hex()
+                }
+        except Exception as ex:
+            entry["error"] = f"block parse error at {start_here}: {ex}"
+            nxt = next_block_like_start(payload, p, section_end)
+            p = nxt if nxt is not None else section_end
+        result["entries"].append(entry)
+    return result
 
-        entries.append(entry)
-        p = region_end
+def next_item_like_start(payload: bytes, search_from: int, hard_limit: int) -> Optional[int]:
+    return next_block_like_start(payload, search_from, hard_limit)
 
-    return entries
+def find_dir_pos_pyr_after(payload: bytes, from_off: int, end_off: int) -> Optional[Dict[str, Any]]:
+    i = from_off
+    while i + 2 + 12 + 12 <= end_off:
+        d = rd_u16_le(payload, i)
+        try:
+            px = rd_f32_le(payload, i+2); py = rd_f32_le(payload, i+6); pz = rd_f32_le(payload, i+10)
+            rx = rd_f32_le(payload, i+14); ry = rd_f32_le(payload, i+18); rz = rd_f32_le(payload, i+22)
+            if all(math.isfinite(v) for v in (px,py,pz,rx,ry,rz)):
+                if (abs(px) < 1e7 and abs(py) < 1e7 and abs(pz) < 1e7
+                    and abs(rx) < 20 and abs(ry) < 20 and abs(rz) < 20):
+                    return {
+                        "dir": d, "dir_offset": i,
+                        "pos": {"x": roundf(px), "y": roundf(py), "z": roundf(pz)},
+                        "pos_offset": i+2,
+                        "pyr": {"x": roundf(rx), "y": roundf(ry), "z": roundf(rz)},
+                        "pyr_degrees": {"x": roundf(math.degrees(rx)), "y": roundf(math.degrees(ry)), "z": roundf(math.degrees(rz))},
+                        "pyr_offset": i+14,
+                    }
+        except Exception:
+            pass
+        i += 2
+    return None
 
-def _parse_item_entries(payload: bytes, itms_off: int, count: int, next_off: int):
-    entries=[]
-    p = itms_off + 6
-    end = next_off
-    for i in range(count):
-        if p >= end: break
-        p, name = _read_lpstring(payload, p)
-        if not name: break
+def parse_items(payload: bytes, itms_off: int, itms_count: int, section_end: int) -> Dict[str, Any]:
+    result = {"count": itms_count, "entries": []}
+    if itms_off < 0 or itms_count == 0:
+        return result
+    p = itms_off + 4 + 2
+    for ii in range(itms_count):
+        entry = {}
+        start_here = p
+        try:
+            nlen = rd_u16_le(payload, p); p += 2
+            name_off = p
+            name = safe_decode(payload[p:p+nlen]); p += nlen
 
-        u32_after_name = None
-        if p + 4 <= end:
-            u32_after_name = int.from_bytes(payload[p:p+4], "little"); p += 4
+            u32_after_name_off = p
+            u32_after_name = rd_u32_le(payload, p); p += 4
 
-        p, collection = _read_lpstring(payload, p)
+            alen = rd_u16_le(payload, p); p += 2
+            author_off = p
+            author = safe_decode(payload[p:p+alen]); p += alen
 
-        if i < count - 1:
-            nx = _find_next_lpstring_start(payload, p, end)
-            region_end = nx if nx else end
-        else:
-            region_end = end
+            if ii < itms_count - 1:
+                nxt = next_item_like_start(payload, p, section_end)
+                end_this = nxt if nxt is not None else section_end
+            else:
+                end_this = section_end
 
-        off_nat3, nat3 = _scan_nat3_near(payload, p, min(region_end, p + 96))
-        off_dir,  dirv = _scan_dir_near(payload, p, min(region_end, p + 96))
-
-        pos=None; off_pos=None
-        for j in range(p, region_end-12+1, 4):
-            f1,f2,f3=struct.unpack_from('<fff', payload, j)
-            if all(math.isfinite(x) for x in (f1,f2,f3)) and -100000 < f1 < 100000 and -100000 < f2 < 100000 and -100000 < f3 < 100000:
-                if abs(f1)+abs(f2)+abs(f3) > 1.0:
-                    pos=(round(f1,4), round(f2,4), round(f3,4)); off_pos=j; break
-
-        pyr=None; off_pyr=None
-        if off_pos:
-            for j in range(off_pos+12, min(region_end-12+1, off_pos+12+96), 4):
-                f1,f2,f3=struct.unpack_from('<fff', payload, j)
-                if all(-3.5 <= x <= 3.5 for x in (f1,f2,f3)):
-                    pyr=(round(f1,4), round(f2,4), round(f3,4)); off_pyr=j; break
-
-        scale=None; off_scale=None
-        if off_pyr:
-            for j in range(off_pyr+12, min(region_end-4+1, off_pyr+12+64), 4):
-                f=struct.unpack_from('<f', payload, j)[0]
-                if 0.01 <= f <= 64.0:
-                    scale=round(f,4); off_scale=j; break
-
-        pivot=None; off_pivot=None
-        if off_scale:
-            for j in range(off_scale+4, min(region_end-12+1, off_scale+128), 4):
-                f1,f2,f3=struct.unpack_from('<fff', payload, j)
-                if all(math.isfinite(x) for x in (f1,f2,f3)):
-                    pivot=(round(f1,4), round(f2,4), round(f3,4)); off_pivot=j; break
-
-        isFlying=None; variantIx=None
-        tail_start = max(p, region_end - 24)
-        for j in range(tail_start, region_end - 4 + 1, 4):
-            v = int.from_bytes(payload[j:j+4], "little")
-            if isFlying is None and v in (0,1):
-                isFlying = v
-            elif variantIx is None and v < 1<<20:
-                variantIx = v
-
-        entry = {
-            "name": name,
-            "collection": collection,
-            "u32_after_name": u32_after_name,
-        }
-        if nat3:
-            entry["coord_nat3"] = {"x": nat3[0], "y": nat3[1], "z": nat3[2]}
-            entry["coord_nat3_offset"] = off_nat3
-        if dirv is not None:
-            entry["dir"] = dirv
-            entry["dir_offset"] = off_dir
-        if pos:
-            entry["pos"] = {"x": pos[0], "y": pos[1], "z": pos[2]}
-            entry["pos_offset"] = off_pos
-        if pyr:
-            entry["pyr"] = {"p": pyr[0], "y": pyr[1], "r": pyr[2]}
-            entry["pyr_offset"] = off_pyr
-        if scale is not None:
-            entry["scale"] = scale
-            entry["scale_offset"] = off_scale
-        if pivot:
-            entry["pivot"] = {"x": pivot[0], "y": pivot[1], "z": pivot[2]}
-            entry["pivot_offset"] = off_pivot
-        if isFlying is not None:
-            entry["isFlying"] = isFlying
-        if variantIx is not None:
-            entry["variantIx"] = variantIx
-
-        entries.append(entry)
-        p = region_end
-
-    return entries
+            trio = find_dir_pos_pyr_after(payload, p, end_this)
+            if trio:
+                p = end_this
+                entry = {
+                    "name": name,
+                    "name_offset": name_off,
+                    "u32_after_name": u32_after_name,
+                    "u32_after_name_offset": u32_after_name_off,
+                    "author": author,
+                    "author_offset": author_off,
+                    "dir": trio["dir"],
+                    "dir_offset": trio["dir_offset"],
+                    "dir_degrees": int(trio["dir"] % 8) * 45 if trio["dir"] >= 4 else int(trio["dir"]) * 90,
+                    "pos": trio["pos"],
+                    "pos_offset": trio["pos_offset"],
+                    "pyr": trio["pyr"],
+                    "pyr_degrees": trio["pyr_degrees"],
+                    "pyr_offset": trio["pyr_offset"],
+                }
+                tstart = trio["pyr_offset"] + 12
+                if end_this > tstart:
+                    entry["tail_raw"] = {
+                        "offset": tstart,
+                        "length": end_this - tstart,
+                        "hex": payload[tstart:end_this].hex()
+                    }
+            else:
+                entry = {
+                    "name": name, "name_offset": name_off,
+                    "u32_after_name": u32_after_name, "u32_after_name_offset": u32_after_name_off,
+                    "author": author, "author_offset": author_off,
+                    "note": "dir/pos/pyr not located within item body"
+                }
+                if end_this > p:
+                    entry["raw_after_author"] = {
+                        "offset": p,
+                        "length": end_this - p,
+                        "hex": payload[p:end_this].hex()
+                    }
+                p = end_this
+        except Exception as ex:
+            entry["error"] = f"item parse error at {start_here}: {ex}"
+            nxt = next_item_like_start(payload, p, section_end)
+            p = nxt if nxt is not None else section_end
+        result["entries"].append(entry)
+    return result
 
 def decode_chat(payload: bytes) -> Dict[str, Any]:
     info: Dict[str, Any] = {}
@@ -379,51 +338,51 @@ def decode_admin_set_action_limit(payload: bytes) -> Dict[str, Any]:
     if len(payload) < 4:
         info["warning"] = "payload too short"
         return info
-    info["limit_hz"] = int.from_bytes(payload[0:4], "little")
+    limit = int.from_bytes(payload[0:4], "little")
+    info["limit_hz"] = limit
     return info
 
 def decode_place_delete_setskin(payload: bytes, type_id: int) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
+    doc: Dict[str, Any] = {}
+    secs = find_sections(payload)
+    doc["sections"] = {
+        k: {"offset": v.get("offset", -1), "count": v.get("count", 0)}
+        for k,v in secs.items()
+    }
+    notes: List[str] = []
 
-    sections = _find_sections(payload)
-    out["sections"] = sections
+    blks_off = secs.get("BLKs", {}).get("offset", -1)
+    blks_cnt = secs.get("BLKs", {}).get("count", 0)
+    skns_off = secs.get("SKNs", {}).get("offset", -1)
+    itms_off = secs.get("ITMs", {}).get("offset", -1)
 
-    blks = sections.get("BLKs")
-    if blks:
-        next_offsets = [v["offset"] for k,v in sections.items() if k != "BLKs" and v["offset"] > blks["offset"]]
-        end = min(next_offsets) if next_offsets else len(payload)
-        entries = _parse_block_entries(payload, blks["offset"], blks["count"], end)
-        out["blocks"] = {"count": blks["count"], "entries": entries}
+    end_blks = skns_off if (blks_off >= 0 and skns_off >= 0) else (len(payload))
+    end_skns = itms_off if (skns_off >= 0 and itms_off >= 0) else (len(payload))
+    end_itms = len(payload)
+
+    if blks_off >= 0:
+        doc["blocks"] = parse_blocks(payload, blks_off, blks_cnt, end_blks)
+        if doc["blocks"]["count"] == 0:
+            notes.append("BLKs present but count=0.")
     else:
-        out["blocks"] = {"count": 0}
+        notes.append("No BLKs section found.")
 
-    itms = sections.get("ITMs")
-    if itms:
-        next_offsets = [v["offset"] for k,v in sections.items() if k != "ITMs" and v["offset"] > itms["offset"]]
-        end = min(next_offsets) if next_offsets else len(payload)
-        entries = _parse_item_entries(payload, itms["offset"], itms["count"], end)
-        out["items"] = {"count": itms["count"], "entries": entries}
+    if skns_off >= 0:
+        cnt = secs["SKNs"]["count"]
+        start = skns_off + 6
+        doc["skins"] = {"count": cnt, "raw_offset": start, "raw_length": max(0, end_skns - start)}
     else:
-        out["items"] = {"count": 0}
+        notes.append("No SKNs section found.")
 
-    skns = sections.get("SKNs")
-    if skns:
-        out["skins"] = {"count": skns["count"]}
+    if itms_off >= 0:
+        itms_cnt = secs["ITMs"]["count"]
+        doc["items"] = parse_items(payload, itms_off, itms_cnt, end_itms)
     else:
-        out["skins"] = {"count": 0}
+        notes.append("No ITMs section found.")
 
-    strings = extract_lpstrings(payload)
-    if strings:
-        out["lpstrings"] = [{"offset": off, "text": s} for off, s in strings]
-    gu = find_guid_and_skin_refs(payload)
-    if gu:
-        out["guids_or_skins"] = gu
-
-    tf = transform_window_candidates(payload, limit=3)
-    if tf:
-        out["transform_candidates"] = tf
-
-    return out
+    if notes:
+        doc["notes"] = notes
+    return doc
 
 class MTLogParser:
     def __init__(self, path: str):
@@ -531,6 +490,7 @@ class App(ttk.Frame):
     def _build_tabs(self):
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True, padx=6, pady=6)
+
         self._build_all_tab()
         self.tabs: Dict[int, Dict[str, Any]] = {}
 
@@ -575,7 +535,7 @@ class App(ttk.Frame):
 
     def _build_all_tab(self):
         cols = ("index","offset","type","payload_len","player","time")
-        widths = (80,120,200,120,260,220)
+        widths = (80,120,200,120,240,220)
         ui = self._make_tab_shell("All Records", cols, widths)
         self.tab_all = ui
         ui["tree"].bind("<<TreeviewSelect>>", lambda e: self._on_select_in_tab(None))
@@ -583,16 +543,17 @@ class App(ttk.Frame):
     def _ensure_type_tab(self, type_id: int):
         if type_id in self.tabs:
             return
-        name = MT_NAMES.get(type_id, f"Type {type_id}")
+        name = type_name(type_id)
         if type_id == 20:
             cols = ("index","player","time","msg_type","message")
-            widths = (80,260,220,100,520)
+            widths = (80,240,220,100,500)
         elif type_id == 16:
             cols = ("index","player","time","limit")
-            widths = (80,260,220,120)
+            widths = (80,240,220,120)
         else:
             cols = ("index","offset","player","time","payload_len")
-            widths = (80,120,260,220,120)
+            widths = (80,120,240,220,120)
+
         ui = self._make_tab_shell(name, cols, widths)
         ui["tree"].bind("<<TreeviewSelect>>", lambda e, tid=type_id: self._on_select_in_tab(tid))
         self.tabs[type_id] = ui
@@ -602,12 +563,14 @@ class App(ttk.Frame):
             title="Open Map Together Log",
             filetypes=[("MapTogether logs","*.map_together_log"), ("All files","*.*")]
         )
-        if not path: return
+        if not path:
+            return
         self._load(path)
 
     def _load(self, path: str):
         try:
-            if self.parser: self.parser.close()
+            if self.parser:
+                self.parser.close()
             self.records.clear()
             self.tab_all["tree"].delete(*self.tab_all["tree"].get_children())
             for ui in self.tabs.values():
@@ -615,11 +578,13 @@ class App(ttk.Frame):
 
             self.parser = MTLogParser(path)
             self.parser.open()
+
             t0 = time.time()
             added = 0
             while True:
                 rec = self.parser.read_next_meta_only()
-                if rec is None: break
+                if rec is None:
+                    break
                 self.records.append(rec)
                 self._append_record_to_tabs(rec)
                 added += 1
@@ -639,7 +604,8 @@ class App(ttk.Frame):
             added = 0
             while True:
                 rec = self.parser.read_next_meta_only()
-                if rec is None: break
+                if rec is None:
+                    break
                 self.records.append(rec)
                 self._append_record_to_tabs(rec)
                 added += 1
@@ -690,17 +656,21 @@ class App(ttk.Frame):
             tree = self.tab_all["tree"]
         else:
             ui = self.tabs.get(tab_type_id)
-            if not ui: return None
+            if not ui:
+                return None
             tree = ui["tree"]
         sel = tree.selection()
-        if not sel: return None
+        if not sel:
+            return None
         idx = int(sel[0])
-        if 0 <= idx < len(self.records): return self.records[idx]
+        if 0 <= idx < len(self.records):
+            return self.records[idx]
         return None
 
     def _on_select_in_tab(self, tab_type_id: Optional[int]):
         rec = self._get_selected_record(tab_type_id)
-        if not rec: return
+        if not rec:
+            return
 
         if rec._decoded is None:
             payload = self.parser.read_payload(rec)
@@ -711,14 +681,14 @@ class App(ttk.Frame):
             elif rec.type_id in (1,2,4):
                 rec._decoded = decode_place_delete_setskin(payload, rec.type_id)
             else:
-                rec._decoded = {"preview": safe_decode(payload[:128])}
+                rec._decoded = {}
 
         header = {
             "index": rec.index,
             "type_id": rec.type_id,
             "type": rec.type_name,
             "file_offset_hex": f"0x{rec.file_offset:x}",
-            "payload_offset_hex": f"0x{rec.file_offset+8:x}",
+            "payload_offset_hex": f"0x{rec.file_offset + 8:x}",
             "payload_len": rec.payload_len,
             "meta_len": rec.meta_len,
             "player": rec.player_id,
@@ -756,8 +726,10 @@ class App(ttk.Frame):
             type_id = None
             for k,v in MT_NAMES.items():
                 if v == title:
-                    type_id = k; break
-            if type_id is None: return
+                    type_id = k
+                    break
+            if type_id is None:
+                return
             subset = [r for r in self.records if r.type_id == type_id]
             data = [self._record_to_json(r, ensure_decoded=True) for r in subset]
             fname = f"{title.replace(' ','_').lower()}.json"
@@ -768,7 +740,8 @@ class App(ttk.Frame):
             filetypes=[("JSON","*.json")],
             initialfile=fname
         )
-        if not path: return
+        if not path:
+            return
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         messagebox.showinfo("Export", f"Saved {len(data)} records to {os.path.basename(path)}")
@@ -800,8 +773,9 @@ class App(ttk.Frame):
 
 def main():
     root = tk.Tk()
+    style = ttk.Style()
     try:
-        ttk.Style().theme_use("clam")
+        style.theme_use("clam")
     except Exception:
         pass
     App(root)
